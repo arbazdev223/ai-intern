@@ -1,0 +1,22 @@
+[
+  {
+    "name": "excel_sum",
+    "keywords": ["sum", "="],
+    "intent": "excel_help"
+  },
+  {
+    "name": "excel_vlookup",
+    "keywords": ["vlookup"],
+    "intent": "excel_help"
+  },
+  {
+    "name": "code_error",
+    "keywords": ["error", "code"],
+    "intent": "code_fix"
+  },
+  {
+    "name": "stack_trace",
+    "keywords": ["stack trace"],
+    "intent": "code_fix"
+  }
+]

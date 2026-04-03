@@ -1,0 +1,64 @@
+{
+  "name": "ifda-ai",
+  "version": "1.0.0",
+  "author": "IFDA",
+  "description": "Electron desktop chat app using OpenAI and Gemini APIs",
+  "main": "main.js",
+  "scripts": {
+    "start": "set ELECTRON_RUN_AS_NODE=&& set NODE_ENV=development&& electron .",
+    "build": "electron-builder --publish always",
+    "dist": "set ELECTRON_BUILDER_OUT_DIR=%TEMP%\\ai-intern-dist&& electron-builder --win",
+    "release:win": "set ELECTRON_BUILDER_OUT_DIR=%TEMP%\\ai-intern-dist&& electron-builder --win --publish always -c.publish.provider=github -c.publish.owner=%IFDA_UPDATE_OWNER% -c.publish.repo=%IFDA_UPDATE_REPO%",
+    "generate:sri": "node scripts/generateSRI.js",
+    "check:sri": "node scripts/generateSRI.js --check",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "build": {
+    "directories": {
+      "output": "dist"
+    },
+    "icon": "blue-logo.ico",
+    "appId": "com.ai.intern",
+    "productName": "AI Intern",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "${env.IFDA_UPDATE_OWNER}",
+        "repo": "${env.IFDA_UPDATE_REPO}"
+      }
+    ],
+    "win": {
+      "icon": "blue-logo.ico",
+      "target": "nsis",
+      "artifactName": "IFDA AI Setup ${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "IFDA AI"
+    }
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3",
+    "electron-reload": "^2.0.0-alpha.1",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "active-win": "^8.2.1",
+    "docx": "^9.5.1",
+    "dompurify": "^3.3.2",
+    "electron-updater": "^6.8.3",
+    "exceljs": "^4.4.0",
+    "highlight.js": "^11.11.1",
+    "marked": "^17.0.4",
+    "mermaid": "^11.13.0",
+    "openai": "^4.86.0",
+    "pdfkit": "^0.16.0",
+    "tesseract.js": "^7.0.0"
+  }
+}

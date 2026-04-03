@@ -1,0 +1,680 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: file:; connect-src http://localhost:11434 https:;"
+    />
+    <title>Ask With IFDA AI Tutor</title>
+    <link rel="icon" href="public/blue-logo.png" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
+      crossorigin="anonymous"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+
+    <!-- ██████████████████████████████████████████████████
+         ROOT SHELL
+         ██████████████████████████████████████████████████ -->
+    <div class="assistant-shell">
+
+      <!-- ══════════════════════════════════════════════
+           SIDEBAR
+           ══════════════════════════════════════════════ -->
+      <aside class="assistant-sidebar" aria-label="Main navigation">
+
+        <!-- Brand -->
+        <div class="n-brand">
+          <img class="n-brand-logo" src="public/blue-logo.png" alt="IFDA AI" />
+          <span class="n-brand-text">Ask IFDA AI Tutor</span>
+        </div>
+
+        <!-- Scrollable area -->
+        <div class="sidebar-scroll">
+
+          <!-- New Chat -->
+          <button id="newChatButton" type="button" class="sidebar-new-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="14" height="14" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            New Chat
+          </button>
+
+          <!-- Chats -->
+          <section class="sidebar-section">
+            <h3 class="sidebar-section-title">
+              <span class="section-icon section-icon-chats" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h7A2.5 2.5 0 0 1 16 6.5v4A2.5 2.5 0 0 1 13.5 13H9l-3.5 3v-3H6.5A2.5 2.5 0 0 1 4 10.5z"/></svg>
+              </span>
+              Chats
+            </h3>
+            <ul id="conversationList" class="conversation-list sidebar-list" aria-label="Conversation list"></ul>
+          </section>
+
+          <!-- Tool cards -->
+          <div class="n-tool-list" role="list">
+            <button id="promptLibraryDesktopBtn" type="button" class="n-tool-card n-tool-card--blue" role="listitem">
+              <span class="n-tool-emoji" aria-hidden="true">🎓</span>
+              <div>
+                <p class="n-tool-title">Prompt Library</p>
+                <p class="n-tool-desc">Explore ready-made prompts</p>
+              </div>
+            </button>
+            <button id="courseHelpBtn" type="button" class="n-tool-card n-tool-card--green" role="listitem">
+              <span class="n-tool-emoji" aria-hidden="true">📚</span>
+              <div>
+                <p class="n-tool-title">Course Help</p>
+                <p class="n-tool-desc">Step-by-step course guidance</p>
+              </div>
+            </button>
+          </div>
+
+          <!-- Prompt Library list -->
+          <section class="sidebar-section hidden-sidebar-section">
+            <h3 class="sidebar-section-title">
+              <span class="section-icon section-icon-library" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg>
+              </span>
+              Library
+            </h3>
+            <ul id="promptLibraryList" class="prompt-library-list sidebar-list" aria-label="Prompt Library"></ul>
+          </section>
+
+          <!-- Saved Prompts -->
+          <section class="sidebar-section hidden-sidebar-section">
+            <div class="sidebar-section-header-row">
+              <h3 class="sidebar-section-title">
+                <span class="section-icon section-icon-saved" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 4h10a2 2 0 0 1 2 2v14l-7-4-7 4V6a2 2 0 0 1 2-2z"/></svg>
+                </span>
+                Saved Prompts
+              </h3>
+              <button id="addSavedPromptButton" type="button" class="sidebar-add-btn">+ Add</button>
+            </div>
+            <ul id="savedPromptList" class="saved-prompt-list sidebar-list" aria-label="Saved Prompts"></ul>
+          </section>
+
+        </div><!-- /.sidebar-scroll -->
+
+        <div class="n-sidebar-foot">
+          <div class="n-sidebar-user">
+            <span>IFDA AI Tutor v1.0</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Sidebar Backdrop -->
+      <button id="sidebarBackdrop" type="button" class="sidebar-backdrop" aria-label="Close sidebar"></button>
+
+      <!-- ══════════════════════════════════════════════
+           MAIN
+           ══════════════════════════════════════════════ -->
+      <div class="assistant-main">
+
+        <!-- Header -->
+        <header class="assistant-header">
+          <div class="header-top">
+            <div class="header-marquee" aria-label="Announcements">
+              <marquee class="header-marquee-scroll" behavior="scroll" direction="left" scrollamount="5">
+                🎉 Admissions Open for this Year | 💻 Learn Full Stack Development | 🎨 Join Graphic Design Pro Course | 🧠 Master UI / UX Design | 🏢 100 % Placement Support Available | 🚀 Become Job Ready with IFDA Institute |
+              </marquee>
+            </div>
+            <div class="header-actions">
+              <button id="sidebarToggleButton" type="button" class="control-btn icon-btn" aria-label="Tools menu" title="Tools">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true"><circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/></svg>
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <!-- Chat Region -->
+        <section class="chat-region">
+
+          <!-- Prompt Browser Panel -->
+          <section id="promptBrowserPanel" class="prompt-browser-panel hidden" aria-label="Prompt browser">
+            <div class="prompt-browser-layout">
+              <aside class="prompt-browser-sidebar" aria-label="Prompt library categories">
+                <div id="promptBrowserCategoryChips" class="prompt-browser-category-chips" aria-label="Prompt categories"></div>
+              </aside>
+              <section class="prompt-browser-main" aria-label="Prompt library content">
+                <div class="prompt-browser-toolbar-actions">
+                  <input id="promptBrowserSearchInput" class="prompt-browser-search-input" type="search" placeholder="Search prompts..." aria-label="Search prompts" />
+                  <button id="promptBrowserCreateButton" type="button" class="prompt-browser-create-btn">+ Create Prompt</button>
+                  <button id="closePromptBrowserButton" type="button" class="prompt-browser-close prompt-browser-close-inline">Close</button>
+                </div>
+                <div id="promptBrowserCards" class="prompt-browser-cards" aria-live="polite"></div>
+              </section>
+            </div>
+            <div id="promptBrowserHero" class="prompt-browser-hero hidden" aria-hidden="true">
+              <img id="promptBrowserHeroImage" class="prompt-browser-hero-image" src="" alt="Prompt image" />
+              <div class="prompt-browser-hero-body">
+                <h3 id="promptBrowserHeroTitle" class="prompt-browser-hero-title"></h3>
+                <pre id="promptBrowserFullPrompt" class="prompt-browser-full-prompt"></pre>
+                <div class="prompt-browser-hero-actions">
+                  <button id="promptBrowserUseButton" type="button" class="prompt-browser-use">Use prompt</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Messages -->
+          <main id="chatMessages" class="chat-messages" aria-live="polite">
+
+            <!-- Empty state -->
+            <div class="n-empty-state" id="nEmptyState">
+              <div class="n-empty-icon" aria-hidden="true">🤖</div>
+              <h2 class="n-empty-title">How can I help today?</h2>
+              <p class="n-empty-sub">Ask anything, generate ideas, or solve a problem</p>
+            </div>
+
+            <!-- Typing indicator -->
+            <div id="typingIndicator" class="typing-indicator hidden" role="status" aria-live="polite">
+              <div class="typing-indicator-shell">
+                <div class="n-typing-avatar" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zm0 4a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm0 13.5a7.5 7.5 0 0 1-6-3c.03-2 4-3.1 6-3.1s5.97 1.1 6 3.1a7.5 7.5 0 0 1-6 3z"/></svg>
+                </div>
+                <div class="n-typing-dots" aria-hidden="true">
+                  <span></span><span></span><span></span>
+                </div>
+                <span class="typing-label">AI is thinking</span>
+              </div>
+            </div>
+
+          </main><!-- /#chatMessages -->
+        </section><!-- /.chat-region -->
+
+        <!-- Composer -->
+        <form id="chatForm" class="composer" autocomplete="off" novalidate>
+          <div class="composer-row">
+            <label class="tool-btn n-attach-label" title="Attach file" tabindex="0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <input type="file" id="fileAttachInput" class="hidden" accept="*/*" aria-label="Attach file" />
+            </label>
+            <button id="screenshotButton" type="button" class="tool-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/><path d="M9 2h6l2 4H7z"/></svg>
+              <span>Screenshot</span>
+            </button>
+            <textarea
+              id="promptInput"
+              rows="1"
+              placeholder="Ask IFDA AI Tutor..."
+              aria-label="Message input"
+            ></textarea>
+            <button id="sendButton" type="submit" class="send-btn" aria-label="Send message">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </button>
+          </div>
+
+          <!-- Meta row -->
+          <div class="composer-meta">
+            <div class="attachment-meta-wrap">
+              <div id="screenshotStatus" class="attachment-chip hidden" role="status">📷 Screenshot attached</div>
+              <button id="clearAttachmentButton" type="button" class="attachment-remove-btn hidden">Remove</button>
+            </div>
+            <label class="privacy-toggle" title="When enabled, screenshots may be sent to external AI APIs.">
+              <input id="externalScreenToggle" type="checkbox" />
+              <span id="externalScreenToggleLabel">External AI: OFF</span>
+            </label>
+            <div id="statusText" class="status-text" role="status" aria-live="polite">Ready</div>
+          </div>
+
+          <!-- Attachment preview -->
+          <div id="attachmentPreview" class="attachment-preview hidden" aria-live="polite">
+            <img id="attachmentPreviewImage" class="attachment-preview-image" alt="Attached screenshot" />
+          </div>
+        </form>
+
+        <!-- Saved Prompt Dialog -->
+        <div id="savedPromptDialogBackdrop" class="saved-prompt-dialog-backdrop hidden" aria-hidden="true">
+          <div class="saved-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="savedPromptDialogHeading">
+            <div class="saved-prompt-dialog-header">
+              <h2 id="savedPromptDialogHeading" class="saved-prompt-dialog-heading">Add Saved Prompt</h2>
+              <button id="savedPromptDialogCloseButton" type="button" class="saved-prompt-dialog-close" aria-label="Close">✕</button>
+            </div>
+            <form id="savedPromptDialogForm" autocomplete="off">
+              <label class="saved-prompt-field">
+                <span class="saved-prompt-field-label">Title</span>
+                <input id="savedPromptTitleInput" class="saved-prompt-input" type="text" maxlength="60" placeholder="e.g. Explain bug report" />
+              </label>
+              <label class="saved-prompt-field">
+                <span class="saved-prompt-field-label">Prompt</span>
+                <textarea id="savedPromptTextInput" class="saved-prompt-textarea" rows="6" placeholder="Write the prompt you want to save..."></textarea>
+              </label>
+              <div class="saved-prompt-dialog-actions">
+                <button id="savedPromptDialogCancelButton" type="button" class="saved-prompt-dialog-btn secondary">Cancel</button>
+                <button id="savedPromptDialogSubmitButton" type="submit" class="saved-prompt-dialog-btn primary">Save Prompt</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+      </div><!-- /.assistant-main -->
+    </div><!-- /.assistant-shell -->
+
+
+    <!-- ██████████████████████████████████████████████████
+         MODALS
+         ██████████████████████████████████████████████████ -->
+
+    <!-- Asked Questions Modal -->
+    <div id="askedQuestionsModal" class="ifda-modal-backdrop hidden" aria-hidden="true">
+      <div class="ifda-modal" role="dialog" aria-modal="true" aria-labelledby="aqModalHeading">
+        <div class="ifda-modal-header">
+          <h2 id="aqModalHeading" class="ifda-modal-title">💡 Asked Questions</h2>
+          <button type="button" class="ifda-modal-close" id="aqModalClose" aria-label="Close">✕</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <input id="aqSearch" type="search" class="ifda-modal-input" placeholder="Search past chats..." aria-label="Search chats" />
+          <div id="aqList" class="ifda-modal-history" style="max-height:38vh;overflow:auto;" aria-live="polite">
+            <p class="ifda-modal-empty">Loading chat history…</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Course Help Modal -->
+    <div id="courseHelpModal" class="ifda-modal-backdrop hidden" aria-hidden="true">
+      <div class="ifda-modal" role="dialog" aria-modal="true" aria-labelledby="chModalHeading">
+        <div class="ifda-modal-header">
+          <h2 id="chModalHeading" class="ifda-modal-title">📚 Course Help</h2>
+          <button type="button" class="ifda-modal-close" id="chModalClose" aria-label="Close">✕</button>
+        </div>
+        <textarea id="chInput" class="ifda-modal-textarea" rows="3" placeholder="Describe your course topic or assignment..."></textarea>
+        <div id="chHistory" class="ifda-course-history" aria-live="polite">
+          <p class="ifda-modal-empty">No questions yet</p>
+        </div>
+        <div class="ifda-modal-footer">
+          <button type="button" class="ifda-modal-cancel-btn" id="chModalCancel">Cancel</button>
+          <button type="button" class="ifda-modal-ask-btn" id="chAskBtn">Ask</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tools / Mobile Menu Modal -->
+    <div id="mobileMenuModal" class="ifda-modal-backdrop hidden" aria-hidden="true">
+      <div class="ifda-modal ifda-menu-modal" role="dialog" aria-modal="true" aria-label="IFDA AI Tools">
+        <div class="ifda-modal-header">
+          <h2 class="ifda-modal-title">✨ IFDA AI Tools</h2>
+          <button type="button" class="ifda-modal-close" id="mobileMenuClose" aria-label="Close">✕</button>
+        </div>
+        <div class="ifda-menu-list">
+          <button type="button" class="ifda-menu-item ifda-menu-item--blue" id="menuPromptLibraryBtn">
+            <span class="ifda-menu-emoji" aria-hidden="true">🎓</span>
+            <div>
+              <p class="ifda-menu-item-title">Prompt Library</p>
+              <p class="ifda-menu-item-desc">Explore ready-made prompts</p>
+            </div>
+          </button>
+          <button type="button" class="ifda-menu-item ifda-menu-item--green" id="menuCourseHelpBtn">
+            <span class="ifda-menu-emoji" aria-hidden="true">📚</span>
+            <div>
+              <p class="ifda-menu-item-title">Course Help</p>
+              <p class="ifda-menu-item-desc">Step-by-step course guidance</p>
+            </div>
+          </button>
+          <button type="button" class="ifda-menu-item ifda-menu-item--yellow" id="menuAskedQuestionsBtn">
+            <span class="ifda-menu-emoji" aria-hidden="true">💡</span>
+            <div>
+              <p class="ifda-menu-item-title">Asked Questions</p>
+              <p class="ifda-menu-item-desc">Clarify doubts instantly</p>
+            </div>
+          </button>
+        </div>
+        <button type="button" class="ifda-modal-close-full" id="mobileMenuCloseBtn">Close</button>
+      </div>
+    </div>
+
+
+    <!-- ██████████████████████████████████████████████████
+         SCRIPTS
+         ██████████████████████████████████████████████████ -->
+    <script defer src="./node_modules/marked/lib/marked.umd.js"></script>
+    <script defer src="./node_modules/dompurify/dist/purify.min.js"></script>
+    <script defer src="./node_modules/mermaid/dist/mermaid.min.js"></script>
+    <script defer src="./src/shared/constants.js"></script>
+    <script defer src="./src/shared/promptBuilder.js"></script>
+    <script defer src="./src/renderer/chat/sessionStore.js"></script>
+    <script defer src="./src/renderer/ui/sidebar.js"></script>
+    <script defer src="./src/renderer/ui/promptLibrary.js"></script>
+    <script defer src="./src/renderer/features/screenshotOCR.js"></script>
+    <script defer src="./src/renderer/features/attachments.js"></script>
+    <script defer src="./src/renderer/features/voiceMode.js"></script>
+    <script defer src="./src/renderer/chat/messageRenderer.js"></script>
+    <script defer src="./src/renderer/chat/chatManager.js"></script>
+    <script defer src="./src/renderer/renderer.js"></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script src="./public/highlight-fallback.js"></script>
+
+    <script>
+    /* ── IFDA AI — UI Init & Modal Logic ─────────────────── */
+    document.addEventListener('DOMContentLoaded', function () {
+    (function () {
+      "use strict";
+
+      /* ── Empty-state observer ─────────────────────────── */
+      var chatMessages = document.getElementById("chatMessages");
+      var emptyState   = document.getElementById("nEmptyState");
+      var typingEl     = document.getElementById("typingIndicator");
+
+      function updateEmptyState() {
+        if (!chatMessages || !emptyState) return;
+        var msgCount = 0;
+        for (var i = 0; i < chatMessages.children.length; i++) {
+          var child = chatMessages.children[i];
+          if (child !== emptyState && child !== typingEl) { msgCount++; }
+        }
+        if (msgCount === 0) {
+          emptyState.style.display = "";
+        } else {
+          emptyState.style.display = "none";
+        }
+      }
+
+      if (chatMessages && emptyState) {
+        updateEmptyState();
+        new MutationObserver(updateEmptyState).observe(chatMessages, { childList: true });
+      }
+
+      /* ── Auto-resize textarea ─────────────────────────── */
+      var promptInput = document.getElementById("promptInput");
+      if (promptInput) {
+        promptInput.addEventListener("input", function () {
+          this.style.height = "auto";
+          this.style.height = Math.min(this.scrollHeight, 160) + "px";
+        });
+        promptInput.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            var form = document.getElementById("chatForm");
+            if (form) form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          }
+        });
+      }
+
+      /* ── Modal helpers ────────────────────────────────── */
+      function openModal(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.classList.remove("hidden");
+        el.setAttribute("aria-hidden", "false");
+        var first = el.querySelector("button, input, textarea");
+        if (first) setTimeout(function () { first.focus(); }, 60);
+      }
+      function closeModal(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.classList.add("hidden");
+        el.setAttribute("aria-hidden", "true");
+      }
+
+      /* Close on backdrop click */
+      document.querySelectorAll(".ifda-modal-backdrop").forEach(function (backdrop) {
+        backdrop.addEventListener("click", function (e) {
+          if (e.target === backdrop) closeModal(backdrop.id);
+        });
+      });
+      /* Close on Escape */
+      document.addEventListener("keydown", function (e) {
+        if (e.key !== "Escape") return;
+        document.querySelectorAll(".ifda-modal-backdrop:not(.hidden)").forEach(function (m) {
+          closeModal(m.id);
+        });
+      });
+
+      /* ── Asked Questions ──────────────────────────────── */
+      var aqModalClose = document.getElementById("aqModalClose");
+      if (aqModalClose) aqModalClose.addEventListener("click", function () { closeModal("askedQuestionsModal"); });
+
+      var askedQBtn = document.getElementById("askedQuestionsBtn");
+      if (askedQBtn) {
+        askedQBtn.addEventListener("click", function () { openModal("askedQuestionsModal"); });
+        // debug: show how many stored sessions exist when opening
+        askedQBtn.addEventListener("click", function () {
+          try {
+            var CHAT_KEY = (window.SharedModules && window.SharedModules.constants && window.SharedModules.constants.CHAT_STORAGE_KEY) || "ai-intern-chat-sessions-v2";
+            var raw = localStorage.getItem(CHAT_KEY) || "";
+            var parsed = raw ? JSON.parse(raw) : null;
+            var sessions = Array.isArray(parsed) ? parsed : (parsed && parsed.sessions) || [];
+            console.log('Asked Questions opened — sessions count:', (sessions && sessions.length) || 0);
+            var t = document.createElement('div');
+            t.className = 'ifda-toast';
+            t.textContent = 'Asked Questions — saved chats: ' + ((sessions && sessions.length) || 0);
+            t.style.position = 'fixed'; t.style.right = '16px'; t.style.top = '120px'; t.style.zIndex = 99999; t.style.background = 'rgba(2,6,23,0.9)'; t.style.color = '#fff'; t.style.padding = '8px 12px'; t.style.borderRadius = '8px';
+            document.body.appendChild(t);
+            setTimeout(function () { try { t.remove(); } catch (e) {} }, 1800);
+          } catch (e) { console.error('Asked Questions debug failed', e); }
+        });
+      }
+
+      var aqInput   = document.getElementById("aqInput");
+      var aqAskBtn  = document.getElementById("aqAskBtn");
+      var aqHistory = document.getElementById("aqHistory");
+
+      function aqAsk() {
+        var q = (aqInput ? aqInput.value : "").trim();
+        if (!q) return;
+        var prevEmpty = aqHistory ? aqHistory.querySelector(".ifda-modal-empty") : null;
+        if (prevEmpty) prevEmpty.remove();
+
+        var item = document.createElement("div");
+        item.className = "aq-item";
+        item.innerHTML =
+          '<span class="aq-item-text">' + q.replace(/</g, "&lt;") + "</span>" +
+          '<button type="button" class="aq-copy-btn" title="Copy to clipboard">⧉</button>';
+        item.querySelector(".aq-copy-btn").addEventListener("click", function () {
+          navigator.clipboard.writeText(q).catch(function () {});
+          var btn = this; btn.textContent = "✓";
+          setTimeout(function () { btn.textContent = "⧉"; }, 1500);
+        });
+        item.querySelector(".aq-item-text").addEventListener("click", function () {
+          closeModal("askedQuestionsModal");
+          if (promptInput) { promptInput.value = q; promptInput.focus(); }
+        });
+        if (aqHistory) { aqHistory.appendChild(item); aqHistory.scrollTop = aqHistory.scrollHeight; }
+        if (aqInput) aqInput.value = "";
+      }
+
+      if (aqAskBtn) aqAskBtn.addEventListener("click", aqAsk);
+      if (aqInput)  aqInput.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); aqAsk(); } });
+
+      /* ── Course Help ──────────────────────────────────── */
+      var chModalClose   = document.getElementById("chModalClose");
+      var chModalCancel  = document.getElementById("chModalCancel");
+      var courseHelpBtn  = document.getElementById("courseHelpBtn");
+      if (chModalClose)  chModalClose.addEventListener("click",  function () { closeModal("courseHelpModal"); });
+      if (chModalCancel) chModalCancel.addEventListener("click", function () { closeModal("courseHelpModal"); });
+      if (courseHelpBtn) courseHelpBtn.addEventListener("click", function () { openModal("courseHelpModal"); });
+
+      var chInput   = document.getElementById("chInput");
+      var chAskBtn  = document.getElementById("chAskBtn");
+      var chHistory = document.getElementById("chHistory");
+
+      if (chAskBtn) {
+        chAskBtn.addEventListener("click", function () {
+          var q = (chInput ? chInput.value : "").trim();
+          if (!q) return;
+          var prevEmpty = chHistory ? chHistory.querySelector(".ifda-modal-empty") : null;
+          if (prevEmpty) prevEmpty.remove();
+
+          var item = document.createElement("div");
+          item.className = "ch-item";
+          item.innerHTML =
+            '<p class="ch-question">' + q.replace(/</g, "&lt;") + "</p>" +
+            '<p class="ch-answer">Routing to IFDA AI&hellip;</p>';
+          if (chHistory) { chHistory.appendChild(item); chHistory.scrollTop = chHistory.scrollHeight; }
+          if (chInput)  chInput.value = "";
+          closeModal("courseHelpModal");
+          if (promptInput) {
+            promptInput.value = q;
+            var form = document.getElementById("chatForm");
+            if (form) form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          }
+        });
+      }
+
+      /* ── Tools / Mobile Menu ──────────────────────────── */
+      var mobileMenuBtn       = document.getElementById("mobileMenuBtn");
+      var mobileMenuClose     = document.getElementById("mobileMenuClose");
+      var mobileMenuCloseBtn  = document.getElementById("mobileMenuCloseBtn");
+      if (mobileMenuBtn)      mobileMenuBtn.addEventListener("click",      function () { openModal("mobileMenuModal"); });
+      if (mobileMenuClose)    mobileMenuClose.addEventListener("click",    function () { closeModal("mobileMenuModal"); });
+      if (mobileMenuCloseBtn) mobileMenuCloseBtn.addEventListener("click", function () { closeModal("mobileMenuModal"); });
+
+      /* Menu → course help */
+      var menuCourseHelpBtn = document.getElementById("menuCourseHelpBtn");
+      if (menuCourseHelpBtn) menuCourseHelpBtn.addEventListener("click", function () {
+        closeModal("mobileMenuModal");
+        openModal("courseHelpModal");
+      });
+      /* Menu → asked questions */
+      var menuAskedQuestionsBtn = document.getElementById("menuAskedQuestionsBtn");
+      if (menuAskedQuestionsBtn) menuAskedQuestionsBtn.addEventListener("click", function () {
+        closeModal("mobileMenuModal");
+        openModal("askedQuestionsModal");
+      });
+      /* Menu → prompt library (open browser panel) */
+      var menuPromptLibraryBtn = document.getElementById("menuPromptLibraryBtn");
+      if (menuPromptLibraryBtn) menuPromptLibraryBtn.addEventListener("click", function () {
+        closeModal("mobileMenuModal");
+        document.dispatchEvent(new CustomEvent("ifda:openPromptLibrary"));
+      });
+
+      /* ── Sidebar Prompt Library card ─────────────────── */
+      var plDesktopBtn = document.getElementById("promptLibraryDesktopBtn");
+      if (plDesktopBtn) {
+        plDesktopBtn.addEventListener("click", function () {
+          document.dispatchEvent(new CustomEvent("ifda:openPromptLibrary"));
+        });
+      }
+
+      /* ── New Chat behaviour: clear messages and show empty hero ───────────────── */
+      var newChatButton = document.getElementById("newChatButton");
+      if (newChatButton) {
+        newChatButton.addEventListener("click", function () {
+          var cm = document.getElementById("chatMessages");
+          var empty = document.getElementById("nEmptyState");
+          var typing = document.getElementById("typingIndicator");
+          // remove all message nodes except empty state and typing indicator
+          if (cm) {
+            Array.from(cm.children).forEach(function (ch) {
+              if (ch !== empty && ch !== typing) ch.remove();
+            });
+            // ensure empty state is visible
+            if (empty) {
+              empty.style.display = "";
+              empty.setAttribute("aria-hidden", "false");
+            }
+            // hide typing
+            if (typing) {
+              typing.classList.add("hidden");
+              typing.setAttribute("aria-hidden", "true");
+            }
+            // close prompt browser panel if open
+            var panel = document.getElementById("promptBrowserPanel");
+            if (panel) panel.classList.add("hidden");
+            // focus input for quick start
+            var input = document.getElementById("promptInput");
+            if (input) { input.value = ""; input.focus(); input.style.height = "auto"; }
+          }
+        });
+      }
+
+        /* ── Asked Questions: load searchable chat history ───────────────── */
+        (function () {
+          var CHAT_KEY = (window.SharedModules && window.SharedModules.constants && window.SharedModules.constants.CHAT_STORAGE_KEY) || "ai-intern-chat-sessions-v2";
+          var aqModal = document.getElementById("askedQuestionsModal");
+          var aqList = document.getElementById("aqList");
+          var aqSearch = document.getElementById("aqSearch");
+
+          function loadSessions() {
+            try {
+              var raw = localStorage.getItem(CHAT_KEY) || "";
+              if (!raw) return [];
+              var parsed = JSON.parse(raw);
+              var sessions = Array.isArray(parsed) ? parsed : (parsed && parsed.sessions) || [];
+              return sessions || [];
+            } catch (e) { return []; }
+          }
+
+          function renderList(filter) {
+            var sessions = loadSessions();
+            if (!aqList) return;
+            aqList.innerHTML = "";
+            if (!sessions || sessions.length === 0) {
+              aqList.innerHTML = '<p class="ifda-modal-empty">No past chats found</p>';
+              return;
+            }
+            var q = String(filter || "").trim().toLowerCase();
+            sessions.forEach(function (s) {
+              try {
+                var title = String(s.title || "").trim() || "Untitled";
+                var created = new Date(Number(s.createdAt || Date.now()));
+                var preview = "";
+                if (Array.isArray(s.recentMessages) && s.recentMessages.length) {
+                  preview = s.recentMessages.map(function (m) { return (m && m.content) || ""; }).join(" — ");
+                } else if (Array.isArray(s.messages) && s.messages.length) {
+                  preview = s.messages.slice(-3).map(function (m) { return m.content || ""; }).join(" — ");
+                }
+                var match = !q || title.toLowerCase().indexOf(q) !== -1 || preview.toLowerCase().indexOf(q) !== -1;
+                if (!match) return;
+                var item = document.createElement("div");
+                item.className = "aq-item";
+                item.style.cursor = "pointer";
+                item.innerHTML = '<div style="flex:1"><strong style="display:block">' + title.replace(/</g, "&lt;") + '</strong><small style="color:var(--muted);">' + created.toLocaleString() + '</small><div style="margin-top:6px;color:var(--muted);font-size:13px;">' + (preview ? preview.replace(/</g, "&lt;") : '&mdash;') + '</div></div>' + '<div style="margin-left:8px;flex-shrink:0"><button class="aq-copy-btn" title="Copy">Copy</button></div>';
+                // click → paste conversation to input
+                item.addEventListener("click", function (e) {
+                  var input = document.getElementById("promptInput");
+                  if (input) {
+                    var text = (title + "\n\n") + (preview || "");
+                    input.value = text;
+                    input.focus();
+                  }
+                  // close modal
+                  if (aqModal) aqModal.classList.add("hidden");
+                  e.stopPropagation();
+                });
+                // copy button
+                var copyBtn = item.querySelector(".aq-copy-btn");
+                if (copyBtn) {
+                  copyBtn.addEventListener("click", function (ev) {
+                    ev.stopPropagation();
+                    var toCopy = title + "\n\n" + (preview || "");
+                    navigator.clipboard.writeText(toCopy).then(function () {
+                      copyBtn.textContent = "✓";
+                      setTimeout(function () { copyBtn.textContent = "Copy"; }, 1200);
+                    }).catch(function () {});
+                  });
+                }
+                aqList.appendChild(item);
+              } catch (err) {}
+            });
+            if (!aqList.firstChild) {
+              aqList.innerHTML = '<p class="ifda-modal-empty">No chats match your search</p>';
+            }
+          }
+
+          if (aqSearch) {
+            aqSearch.addEventListener("input", function () { renderList(aqSearch.value); });
+          }
+
+          // open handler: when modal opens, render list
+          var aqOpenBtn = document.getElementById("askedQuestionsBtn");
+          if (aqOpenBtn) {
+            aqOpenBtn.addEventListener("click", function () {
+              setTimeout(function () { renderList(""); if (aqSearch) { aqSearch.value = ""; aqSearch.focus(); } }, 80);
+            });
+          }
+        })();
+
+    })();
+    });
+    </script>
+
+  </body>
+</html>

@@ -1,0 +1,5 @@
+
+> ollama-desktop-chat@1.0.0 start
+> set ELECTRON_RUN_AS_NODE=&& electron .
+
+
