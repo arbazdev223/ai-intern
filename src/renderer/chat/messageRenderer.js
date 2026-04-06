@@ -707,7 +707,7 @@
         indicator.classList.add("hidden");
       }
 
-      if (indicator.querySelector(".typing-indicator") && indicator.querySelector(".message-rail")) {
+      if (indicator.querySelector(".typing-indicator-shell") && indicator.querySelector(".message-rail")) {
         return;
       }
 
@@ -728,18 +728,21 @@
       bubble.className = "bubble chat-bubble";
 
       const typingBubble = document.createElement("div");
-      typingBubble.className = "typing-indicator";
+      typingBubble.className = "typing-indicator-shell";
+
+      const dots = document.createElement("div");
+      dots.className = "n-typing-dots";
+      dots.setAttribute("aria-hidden", "true");
+
+      for (let index = 0; index < 3; index += 1) {
+        dots.appendChild(document.createElement("span"));
+      }
 
       const label = document.createElement("span");
       label.className = "typing-label";
       label.textContent = "AI is thinking";
+      typingBubble.appendChild(dots);
       typingBubble.appendChild(label);
-
-      for (let index = 0; index < 3; index += 1) {
-        const dot = document.createElement("span");
-        dot.className = "typing-dot";
-        typingBubble.appendChild(dot);
-      }
 
       bubble.appendChild(typingBubble);
       body.appendChild(bubble);

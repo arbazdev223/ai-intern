@@ -280,32 +280,6 @@
 
       refs.promptBrowserCards.innerHTML = "";
 
-      if (lastPromptCatalog.length > 0 && !search) {
-        const trendingWrap = document.createElement("section");
-        trendingWrap.className = "prompt-browser-trending";
-
-        const trendingTitle = document.createElement("p");
-        trendingTitle.className = "prompt-browser-trending-title";
-        trendingTitle.textContent = "Trending";
-
-        const trendingTags = document.createElement("div");
-        trendingTags.className = "prompt-browser-trending-tags";
-
-        lastPromptCatalog.slice(0, 4).forEach((item) => {
-          const tagBtn = document.createElement("button");
-          tagBtn.type = "button";
-          tagBtn.className = "prompt-browser-trending-tag";
-          tagBtn.dataset.browserAction = "use";
-          tagBtn.dataset.promptKey = item.key;
-          tagBtn.textContent = item.title;
-          trendingTags.appendChild(tagBtn);
-        });
-
-        trendingWrap.appendChild(trendingTitle);
-        trendingWrap.appendChild(trendingTags);
-        refs.promptBrowserCards.appendChild(trendingWrap);
-      }
-
       if (lastPromptCatalog.length === 0) {
         const empty = document.createElement("div");
         empty.className = "prompt-browser-empty";

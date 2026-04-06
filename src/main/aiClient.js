@@ -437,13 +437,30 @@ Your job:
       return false;
     }
 
-    const patterns = [
-      /\b(world|global|international|geopolitics?)\b/,
-      /\b(latest|today|current|breaking|headline|news|updates?)\b/,
-      /\b(abhi|aaj|duniya|kya\s+chal\s+raha)\b/
-    ];
+    const hasGeoContext = /\b(world|global|international|geopolitics?|war|conflict|middle\s*east|iran|israel|ukraine|russia|duniya)\b/.test(
+      text
+    );
+    const hasNewsSignal = /\b(latest|today|current|breaking|headline|news|updates?|live)\b/.test(text);
+    const hasNowSignal = /\b(abhi|aaj|filhal|right\s*now|kya\s+chal\s+raha)\b/.test(text);
 
-    return patterns.some((pattern) => pattern.test(text));
+    return (hasGeoContext && (hasNewsSignal || hasNowSignal)) || (hasNewsSignal && /\b(world|duniya|global|international)\b/.test(text));
+  }
+
+  function shouldSkipWebSearchForPrompt(userPrompt) {
+    return false;
+  }
+
+  function isDynamicRateQuery(userPrompt) {
+    const text = String(userPrompt || "").toLowerCase();
+    if (!text) {
+      return false;
+    }
+
+    const asksRate = /(%|percent|percentage|rate|slab|kitne|kitna)\b/.test(text);
+    const gstOrTax = /\b(gst|tax)\b/.test(text);
+    const timeSensitive = /\b(abhi|latest|today|current|new)\b/.test(text);
+
+    return gstOrTax && asksRate && timeSensitive;
   }
 
   function buildCurrentEventsHeadlinesResponse(userPrompt, webResult) {
@@ -636,11 +653,12 @@ Your job:
 
     if (!useHeadings) {
       return [
-        `Based on recent reports, ${contextLine}`,
+        `**Quick update:** Based on recent reports, ${contextLine}`,
         "",
+        "**Top points:**",
         ...exampleLines,
         "",
-        "As of latest available information, situation quickly change ho sakti hai, so reliable updates follow karte rehna important hai."
+        "**Note:** As of latest available information, situation quickly change ho sakti hai, so reliable updates follow karte rehna important hai."
       ].join("\n");
     }
 
@@ -1622,8 +1640,8 @@ Your job:
       conversationIntent === "casual" || responseMode === "minimal"
         ? "Respond in exactly one line. Be natural and concise."
         : responseMode === "short"
-          ? "Respond briefly in 2-4 sentences. Keep it clear and direct."
-          : "Respond clearly in natural teacher-like conversation. Start simple, then example, then optional extra detail. Avoid headings unless user asks.";
+          ? "Respond briefly in 2-4 sentences. Keep it clear and direct. Do not use headings or bullets for short replies."
+          : "Respond clearly in natural teacher-like conversation. Start simple, then example, then optional extra detail. For readability in detailed replies, use light structure with bold labels like **Answer:**, **Example:**, **Note:** and use bullet points only when listing multiple items.";
     const toneInstruction =
       tone === "casual"
         ? "Respond in a friendly, natural, conversational tone. No headings."
@@ -1633,7 +1651,9 @@ Your job:
       conversationIntent === "casual"
         ? "Respond in 1-2 lines. Keep it natural and conversational."
         : conversationIntent === "meaningful"
-          ? "Respond helpfully to the user's meaning. Ask a brief follow-up only if needed. Do not greet again."
+          ? responseMode === "short"
+            ? "Respond helpfully to the user's meaning in a compact style. Do not ask unnecessary follow-up questions."
+            : "Respond helpfully to the user's meaning. Keep flow natural but readable; use light formatting only when it improves clarity. Ask a brief follow-up only if needed. Do not greet again."
           : "";
 
     if (normalizedIntent === "hybrid") {
@@ -1735,10 +1755,13 @@ Your job:
     const outputTypes = fileRequested ? deriveOutputTypesFromPrompt(userPrompt) : [];
 
     const selectedPrompt = selectPrompt(normalizedIntent);
+    const skipWebSearch = shouldSkipWebSearchForPrompt(userPrompt);
+    const dynamicRateQuery = isDynamicRateQuery(userPrompt);
     const selectedTool =
       !rawPrompt &&
       !screenshotBase64 &&
-      (needsWeb || promptBuilder.shouldTriggerWebSearch(userPrompt))
+      !skipWebSearch &&
+      (needsWeb || promptBuilder.shouldTriggerWebSearch(userPrompt) || dynamicRateQuery)
         ? "webSearch"
         : "";
 

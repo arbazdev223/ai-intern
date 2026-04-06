@@ -153,16 +153,49 @@ function createIntentService(modelService) {
 
   function isGreeting(input) {
     const text = String(input || "").toLowerCase().trim();
-    return /^(hi+|hey+|hello+)$/.test(text);
+    if (/^(hi+|hey+|hello+|hii+|hlo+|yo+)$/.test(text)) {
+      return true;
+    }
+
+    // Hinglish/typo-friendly greeting phrases.
+    const greetingPhrases = [
+      /\b(kya\s+haal|kya\s+hal|kya\s+haal\s+hai|kya\s+hal\s+hai)\b/,
+      /\b(kaise\s+ho|kaise\s+ho\s+tum)\b/,
+      /\b(sab\s+theek|sab\s+thik|sab\s+thik\s+hai|sab\s+theek\s+hai)\b/,
+      /\b(aur\s+batao|aur\s+sunao)\b/
+    ];
+
+    return greetingPhrases.some((pattern) => pattern.test(text));
   }
 
   function normalize(text) {
     return String(text || "").toLowerCase().trim();
   }
 
+  function hasConcreteTaskSignals(text) {
+    const t = normalize(text);
+    if (!t) {
+      return false;
+    }
+
+    const taskPatterns = [
+      /\b(error|issue|problem|fix|debug|code|function|api|query|bug)\b/,
+      /\b(pdf|docx?|excel|sheet|html|json|file|download|export)\b/,
+      /\b(price|rate|gst|tax|gold|stock|salary|invoice|amount)\b/,
+      /\b(latest|news|update|search|headline|current)\b/,
+      /\b(what|who|when|where|why|how\s+to)\b/,
+      /https?:\/\//,
+      /[%$€₹]/,
+      /\d/
+    ];
+
+    return taskPatterns.some((pattern) => pattern.test(t));
+  }
+
   function getSignals(text) {
     const t = normalize(text);
     const words = t ? t.split(/\s+/).filter(Boolean) : [];
+    const greetingLike = isGreeting(t);
 
     return {
       wordCount: words.length,
@@ -170,7 +203,7 @@ function createIntentService(modelService) {
       hasVerb: /\b(kar|kya|kaise|bata|help|explain|tell|guide|discuss)\b/i.test(t),
       isShort: t.length <= 12,
       isSingleWord: words.length === 1,
-      isGreetingPattern: /^(hi+|hello+|hey+|hlo+|yo+)$/.test(t)
+      isGreetingPattern: greetingLike || /^(hi+|hello+|hey+|hlo+|yo+)$/.test(t)
     };
   }
 
@@ -179,6 +212,11 @@ function createIntentService(modelService) {
 
     if (s.isGreetingPattern || (s.isSingleWord && s.isShort)) {
       return "greeting";
+    }
+
+    // Scalable small-talk rule: short messages without concrete task signals stay casual.
+    if (!s.hasConcreteTaskSignal && s.wordCount <= 8) {
+      return "casual";
     }
 
     if (s.hasVerb || s.wordCount >= 3 || s.hasQuestion) {

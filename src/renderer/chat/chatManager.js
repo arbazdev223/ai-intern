@@ -81,21 +81,34 @@
       }
     }
 
-    function setTypingIndicator(show) {
+    function setTypingIndicator(show, labelText = "AI is thinking") {
+      const safeLabel = String(labelText || "AI is thinking").trim() || "AI is thinking";
       if (refs.typingIndicator) {
         refs.typingIndicator.classList.toggle("hidden", !show);
       }
-      if (refs.typingLabel) {
-        refs.typingLabel.textContent = "AI is thinking";
+      const activeTypingLabel =
+        (refs.typingIndicator && refs.typingIndicator.querySelector(".typing-label")) ||
+        refs.typingLabel ||
+        null;
+      if (activeTypingLabel) {
+        activeTypingLabel.textContent = show ? safeLabel : "AI is thinking";
+        refs.typingLabel = activeTypingLabel;
       }
       if (!show && longRequestTimer) {
         clearTimeout(longRequestTimer);
         longRequestTimer = null;
       }
-      if (show && !longRequestTimer && refs.typingLabel) {
+      if (show && !longRequestTimer && activeTypingLabel) {
+        const followUpLabel = /\bimage\b/i.test(safeLabel)
+          ? "Still generating image..."
+          : "Still working...";
         longRequestTimer = setTimeout(() => {
-          if (refs.typingLabel) {
-            refs.typingLabel.textContent = "Still working...";
+          const liveLabel =
+            (refs.typingIndicator && refs.typingIndicator.querySelector(".typing-label")) ||
+            refs.typingLabel ||
+            null;
+          if (liveLabel) {
+            liveLabel.textContent = followUpLabel;
           }
         }, 7000);
       }
@@ -803,7 +816,7 @@
               }
 
               setBusyState(true);
-              setTypingIndicator(true);
+              setTypingIndicator(true, "Generating image...");
               setStatus("Generating image...", { busy: true });
 
               try {

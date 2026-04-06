@@ -111,11 +111,30 @@ function resolveImageExtension(contentType, url) {
   return match ? match[1].toLowerCase().replace("jpeg", "jpg") : "png";
 }
 
+function resolveLocalImagePath(urlValue, path) {
+  const raw = String(urlValue || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  if (/^file:\/\//i.test(raw)) {
+    try {
+      const { fileURLToPath } = require("url");
+      return fileURLToPath(raw);
+    } catch (_error) {
+      throw new Error("Invalid image file url.");
+    }
+  }
+
+  return path.isAbsolute(raw) ? raw : "";
+}
+
 async function downloadImageToPath(payload, app, fsPromises, path) {
   ensurePayloadObject(payload, "Download image");
   const url = ensureStringField(payload, "url", MAX_IMAGE_BYTES);
   let buffer = null;
   let extension = "png";
+  const localImagePath = resolveLocalImagePath(url, path);
 
   if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(url)) {
     const match = url.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i);
@@ -125,10 +144,7 @@ async function downloadImageToPath(payload, app, fsPromises, path) {
     const mime = match[1];
     extension = resolveImageExtension(`image/${mime}`, "");
     buffer = Buffer.from(match[2], "base64");
-  } else {
-    if (!/^https?:\/\//i.test(url)) {
-      throw new Error("Invalid image url.");
-    }
+  } else if (/^https?:\/\//i.test(url)) {
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Download failed (${response.status}).`);
@@ -137,6 +153,15 @@ async function downloadImageToPath(payload, app, fsPromises, path) {
     const contentType = response.headers.get("content-type") || "";
     extension = resolveImageExtension(contentType, url);
     buffer = Buffer.from(await response.arrayBuffer());
+  } else if (localImagePath) {
+    const stats = await fsPromises.stat(localImagePath);
+    if (!stats.isFile()) {
+      throw new Error("Image path is not a file.");
+    }
+    extension = resolveImageExtension("", localImagePath);
+    buffer = await fsPromises.readFile(localImagePath);
+  } else {
+    throw new Error("Invalid image url.");
   }
 
   const suggested = sanitizeFileName(payload.fileName, `ai-image-${Date.now()}`);
@@ -295,7 +320,10 @@ function registerIpcHandlers(options = {}) {
 
   ipcMain.handle("assistant:open-image", async (_event, payload = {}) => {
     try {
-      const targetPath = await downloadImageToPath(payload, app, fsPromises, path);
+      ensurePayloadObject(payload, "Open image");
+      const url = ensureStringField(payload, "url", MAX_IMAGE_BYTES);
+      const localImagePath = resolveLocalImagePath(url, path);
+      const targetPath = localImagePath || (await downloadImageToPath(payload, app, fsPromises, path));
       const result = await shell.openPath(targetPath);
       if (result) {
         throw new Error(result);

@@ -31,7 +31,7 @@
   --shadow-md:       0 8px 28px rgba(37, 99, 235, 0.14);
   --shadow-lg:       0 18px 52px rgba(37, 99, 235, 0.18);
   --sidebar-width:   264px;
-  --content-width:   860px;
+  --content-width:   1260px;
   --content-padding: clamp(14px, 2vw, 28px);
   /* kept for JS-generated content compatibility */
   --assistant-bg:    rgba(255, 255, 255, 0.82);
@@ -54,6 +54,30 @@ html, body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.n-tool-card,
+.n-tool-title,
+.n-tool-desc,
+.prompt-library-btn,
+.saved-prompt-select,
+.prompt-browser-create-btn,
+.prompt-browser-close,
+.prompt-browser-close-inline,
+.prompt-browser-category-chip,
+.prompt-browser-trending-tag,
+.prompt-browser-card-title,
+.prompt-browser-card-badge,
+.prompt-browser-card-text,
+.prompt-browser-card-btn {
+  font-family: inherit;
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -665,7 +689,7 @@ html, body {
   border: 1px solid transparent;
   border-radius: 12px;
   background: transparent;
-  color: var(--muted);
+  color: var(--text-strong);
   padding: 0 12px;
   text-align: left;
   font-size: 16px;
@@ -682,8 +706,8 @@ html, body {
 
 .prompt-browser-category-chip.active {
   border-color: rgba(37, 99, 235, 0.35);
-  background: rgba(37, 99, 235, 0.16);
-  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.14);
+  color: var(--accent-strong);
 }
 
 .prompt-browser-cards {
@@ -722,7 +746,7 @@ html, body {
   border: 1px solid rgba(148, 163, 184, 0.34);
   border-radius: 999px;
   background: rgba(241, 245, 249, 0.9);
-  color: #334155;
+  color: var(--text);
   padding: 0 10px;
   font-size: 11px;
   font-weight: 700;
@@ -803,7 +827,7 @@ html, body {
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
-  color: var(--muted);
+  color: var(--text);
   padding: 0 10px;
   font-size: 11px;
   font-weight: 700;
@@ -1191,6 +1215,17 @@ html, body {
   background: rgba(37, 99, 235, 0.06);
   color: var(--accent); font-size: 12px; font-weight: 600;
   border: 1px dashed rgba(37, 99, 235, 0.3); min-height: 120px;
+  overflow: hidden;
+  animation: imageLoadingPulse 1.8s ease-in-out infinite;
+}
+.image-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, 0.5) 50%, transparent 75%);
+  transform: translateX(-130%);
+  animation: imageLoadingShimmer 1.5s linear infinite;
+  pointer-events: none;
 }
 .chat-image-block.image-ready .image-loading { display: none; }
 .image-spinner {
@@ -1292,6 +1327,7 @@ html, body {
   background: rgba(255, 255, 255, 0.85);
   border: 1px solid var(--sidebar-border);
   box-shadow: 0 2px 10px rgba(37, 99, 235, 0.08);
+  animation: typingShellFloat 1.7s ease-in-out infinite;
 }
 .n-typing-avatar {
   width: 26px; height: 26px; border-radius: 50%;
@@ -1314,6 +1350,30 @@ html, body {
 @keyframes tdot {
   0%, 80%, 100% { transform: scale(0.65); opacity: 0.45; }
   40%           { transform: scale(1);    opacity: 1;    }
+}
+
+@keyframes typingShellFloat {
+  0%, 100% { transform: translateY(0); box-shadow: 0 2px 10px rgba(37, 99, 235, 0.08); }
+  50% { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(37, 99, 235, 0.12); }
+}
+
+@keyframes imageLoadingPulse {
+  0%, 100% { background: rgba(37, 99, 235, 0.06); }
+  50% { background: rgba(37, 99, 235, 0.1); }
+}
+
+@keyframes imageLoadingShimmer {
+  to { transform: translateX(130%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-indicator-shell,
+  .n-typing-dots span,
+  .image-loading,
+  .image-loading::after,
+  .image-spinner {
+    animation: none !important;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════
