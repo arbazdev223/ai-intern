@@ -101,46 +101,63 @@ const shortcutManager = createShortcutManager({
   }
 });
 
-app.whenReady().then(async () => {
-  registerIpcHandlers({
-    ipcMain,
-    aiClient,
-    screenshotService,
-    voiceService,
-    windowManager,
-    updateService
-  });
-  await windowManager.initialize();
-  trayManager.create();
-  shortcutManager.register();
-  if (typeof updateService.initAutoUpdate === "function") {
-    updateService.initAutoUpdate();
-  } else {
-    updateService.initialize();
-  }
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-  screen.on("display-metrics-changed", () => {
-    windowManager.positionWindows();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (app.isReady()) {
+      windowManager.showChatWindow({ fromShortcut: true });
+      return;
+    }
+
+    app.once("ready", () => {
+      windowManager.showChatWindow({ fromShortcut: true });
+    });
   });
 
-  app.on("activate", () => {
-    windowManager.showChatWindow();
+  app.whenReady().then(async () => {
+    registerIpcHandlers({
+      ipcMain,
+      aiClient,
+      screenshotService,
+      voiceService,
+      windowManager,
+      updateService
+    });
+    await windowManager.initialize();
+    trayManager.create();
+    shortcutManager.register();
+    if (typeof updateService.initAutoUpdate === "function") {
+      updateService.initAutoUpdate();
+    } else {
+      updateService.initialize();
+    }
+
+    screen.on("display-metrics-changed", () => {
+      windowManager.positionWindows();
+    });
+
+    app.on("activate", () => {
+      windowManager.showChatWindow();
+    });
   });
-});
 
-app.on("before-quit", () => {
-  windowManager.markQuitting();
-  windowManager.dispose();
-});
+  app.on("before-quit", () => {
+    windowManager.markQuitting();
+    windowManager.dispose();
+  });
 
-app.on("will-quit", () => {
-  updateService.dispose();
-  shortcutManager.unregisterAll();
-  trayManager.destroy();
-});
+  app.on("will-quit", () => {
+    updateService.dispose();
+    shortcutManager.unregisterAll();
+    trayManager.destroy();
+  });
 
-app.on("window-all-closed", (event) => {
-  if (!windowManager.isAppQuitting()) {
-    event.preventDefault();
-  }
-});
+  app.on("window-all-closed", (event) => {
+    if (!windowManager.isAppQuitting()) {
+      event.preventDefault();
+    }
+  });
+}

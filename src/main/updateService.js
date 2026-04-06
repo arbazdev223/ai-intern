@@ -2,6 +2,23 @@ const { autoUpdater } = require("electron-updater");
 
 const DEFAULT_UPDATE_OWNER = "arbazdev223";
 const DEFAULT_UPDATE_REPO = "ai-intern";
+const DEFAULT_AUTO_INSTALL_DELAY_MS = 5000;
+
+function resolveAutoInstallOnDownload() {
+  const value = String(process.env.IFDA_AUTO_INSTALL_ON_DOWNLOAD || "true").trim().toLowerCase();
+  if (!value) {
+    return true;
+  }
+  return !(value === "0" || value === "false" || value === "no" || value === "off");
+}
+
+function resolveAutoInstallDelayMs() {
+  const raw = Number(process.env.IFDA_AUTO_INSTALL_DELAY_MS);
+  if (!Number.isFinite(raw) || raw < 0) {
+    return DEFAULT_AUTO_INSTALL_DELAY_MS;
+  }
+  return Math.min(raw, 60_000);
+}
 
 function getGithubFeedConfig() {
   const owner = String(process.env.IFDA_UPDATE_OWNER || DEFAULT_UPDATE_OWNER).trim();
@@ -27,6 +44,10 @@ function createUpdateService(options = {}) {
   let periodicTimer = null;
   let lastUpdateInfo = null;
   let isUpdateDownloaded = false;
+  let installRequested = false;
+  let autoInstallTimer = null;
+  const autoInstallOnDownload = resolveAutoInstallOnDownload();
+  const autoInstallDelayMs = resolveAutoInstallDelayMs();
 
   function log(message, payload) {
     if (typeof payload === "undefined") {
@@ -123,11 +144,48 @@ function createUpdateService(options = {}) {
       };
     }
 
+    installRequested = true;
     autoUpdater.quitAndInstall();
     return {
       ok: true,
       installing: true
     };
+  }
+
+  function scheduleAutoInstall(version) {
+    if (!autoInstallOnDownload || installRequested) {
+      return;
+    }
+
+    installRequested = true;
+    emitToRenderer("update-status", {
+      state: "installing",
+      message: `Update ${version || "new"} downloaded. Closing app to install...`,
+      version: version || undefined
+    });
+
+    const runInstall = () => {
+      try {
+        autoUpdater.quitAndInstall();
+      } catch (error) {
+        installRequested = false;
+        log("install trigger failed", error && error.message ? error.message : error);
+        emitToRenderer("update-status", {
+          state: "error",
+          message: "Automatic install failed. Please restart the app manually."
+        });
+      }
+    };
+
+    if (autoInstallDelayMs <= 0) {
+      runInstall();
+      return;
+    }
+
+    autoInstallTimer = setTimeout(() => {
+      autoInstallTimer = null;
+      runInstall();
+    }, autoInstallDelayMs);
   }
 
   function registerEvents() {
@@ -182,6 +240,7 @@ function createUpdateService(options = {}) {
       });
       emitToRenderer("update-ready", { version });
       emitToRenderer("update-ready-silent", { version });
+      scheduleAutoInstall(version);
     });
   }
 
@@ -223,6 +282,10 @@ function createUpdateService(options = {}) {
   }
 
   function dispose() {
+    if (autoInstallTimer) {
+      clearTimeout(autoInstallTimer);
+      autoInstallTimer = null;
+    }
     if (periodicTimer) {
       clearInterval(periodicTimer);
       periodicTimer = null;

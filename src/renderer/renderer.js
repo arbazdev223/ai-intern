@@ -1,7 +1,34 @@
 (function (root) {
+  const VOICE_MODE_TEMP_DISABLED = true;
+
+  function applyVoiceModeDisabledState(refs) {
+    if (!VOICE_MODE_TEMP_DISABLED) {
+      return;
+    }
+
+    if (refs.voiceToggle) {
+      refs.voiceToggle.checked = false;
+      refs.voiceToggle.disabled = true;
+      const voiceToggleWrap = refs.voiceToggle.closest(".privacy-toggle");
+      if (voiceToggleWrap) {
+        voiceToggleWrap.classList.add("hidden");
+      }
+    }
+
+    if (refs.voiceToggleLabel) {
+      refs.voiceToggleLabel.textContent = "Voice Mode: OFF";
+    }
+
+    if (refs.voiceLivePreview) {
+      refs.voiceLivePreview.textContent = "";
+      refs.voiceLivePreview.classList.add("hidden");
+    }
+  }
+
   function getRefs() {
     return {
       addSavedPromptButton: document.getElementById("addSavedPromptButton"),
+      appVersionLabel: document.getElementById("appVersionLabel"),
       assistantShell: document.querySelector(".assistant-shell"),
       attachmentPreview: document.getElementById("attachmentPreview"),
       attachmentPreviewImage: document.getElementById("attachmentPreviewImage"),
@@ -58,6 +85,28 @@
     };
   }
 
+  async function syncAppVersionLabel(refs) {
+    if (!refs || !refs.appVersionLabel) {
+      return;
+    }
+
+    const fallback = "IFDA AI Tutor";
+    refs.appVersionLabel.textContent = fallback;
+
+    if (!root.assistantAPI || typeof root.assistantAPI.getAppVersion !== "function") {
+      return;
+    }
+
+    try {
+      const version = String(await root.assistantAPI.getAppVersion() || "").trim();
+      refs.appVersionLabel.textContent = version
+        ? `IFDA AI Tutor v${version}`
+        : fallback;
+    } catch (_error) {
+      refs.appVersionLabel.textContent = fallback;
+    }
+  }
+
   function init() {
     console.log("electronAPI:", root.electronAPI);
     if (!root.assistantAPI) {
@@ -66,6 +115,8 @@
     }
 
     const refs = getRefs();
+    applyVoiceModeDisabledState(refs);
+    void syncAppVersionLabel(refs);
     if (!refs.chatMessages || !refs.chatForm || !refs.promptInput || !refs.sendButton || !refs.screenshotButton) {
       console.error("Required chat UI elements are missing.");
       return;
@@ -114,16 +165,21 @@
       refs
     });
 
-    const voiceManager = root.RendererModules.voiceMode.createVoiceModeManager({
-      assistantAPI: root.assistantAPI,
-      getBusy: () => Boolean(chatManager && chatManager.getBusy()),
-      refs,
-      setStatus: (...args) => {
-        if (chatManager) {
-          chatManager.setStatus(...args);
+    const voiceManager = VOICE_MODE_TEMP_DISABLED
+      ? {
+          init: () => {},
+          speak: () => {}
         }
-      }
-    });
+      : root.RendererModules.voiceMode.createVoiceModeManager({
+          assistantAPI: root.assistantAPI,
+          getBusy: () => Boolean(chatManager && chatManager.getBusy()),
+          refs,
+          setStatus: (...args) => {
+            if (chatManager) {
+              chatManager.setStatus(...args);
+            }
+          }
+        });
 
     const attachments = root.RendererModules.attachments.createAttachmentsManager({
       assistantAPI: root.assistantAPI,

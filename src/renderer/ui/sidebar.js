@@ -5,6 +5,9 @@
     const refs = options.refs;
     let isSidebarOpen = false;
     let desktopSidebarCollapsed = false;
+    let toolsModal = null;
+    let toolsModalClose = null;
+    let toolsModalCloseBtn = null;
 
     function isCompactSidebarMode() {
       if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -50,6 +53,13 @@
         return;
       }
 
+      if (!isCompactSidebarMode()) {
+        refs.sidebarToggleButton.setAttribute("aria-expanded", "false");
+        refs.sidebarToggleButton.setAttribute("aria-label", "Open tools menu");
+        refs.sidebarToggleButton.setAttribute("title", "Tools");
+        return;
+      }
+
       const expanded = isCompactSidebarMode() ? isSidebarOpen : !desktopSidebarCollapsed;
       refs.sidebarToggleButton.setAttribute("aria-expanded", expanded ? "true" : "false");
       refs.sidebarToggleButton.setAttribute(
@@ -62,6 +72,22 @@
             ? "Expand sidebar"
             : "Collapse sidebar"
       );
+    }
+
+    function openToolsModal() {
+      if (!toolsModal) {
+        return;
+      }
+      toolsModal.classList.remove("hidden");
+      toolsModal.setAttribute("aria-hidden", "false");
+    }
+
+    function closeToolsModal() {
+      if (!toolsModal) {
+        return;
+      }
+      toolsModal.classList.add("hidden");
+      toolsModal.setAttribute("aria-hidden", "true");
     }
 
     function closeAllMenus(exceptMenu = null) {
@@ -95,10 +121,7 @@
 
     function handleSidebarToggle() {
       if (!isCompactSidebarMode()) {
-        desktopSidebarCollapsed = !desktopSidebarCollapsed;
-        saveDesktopSidebarPreference();
-        applyDesktopSidebarState();
-        updateSidebarToggleState();
+        openToolsModal();
         return;
       }
 
@@ -162,6 +185,12 @@
         return;
       }
 
+      if (event.key === "Escape" && toolsModal && !toolsModal.classList.contains("hidden")) {
+        event.preventDefault();
+        closeToolsModal();
+        return;
+      }
+
       if (event.key === "Escape" && isSidebarOpen) {
         closeSidebar();
       }
@@ -169,12 +198,28 @@
 
     function init() {
       desktopSidebarCollapsed = loadDesktopSidebarPreference();
+      toolsModal = document.getElementById("mobileMenuModal");
+      toolsModalClose = document.getElementById("mobileMenuClose");
+      toolsModalCloseBtn = document.getElementById("mobileMenuCloseBtn");
 
       if (refs.sidebarToggleButton) {
         refs.sidebarToggleButton.addEventListener("click", handleSidebarToggle);
       }
       if (refs.sidebarBackdrop) {
         refs.sidebarBackdrop.addEventListener("click", closeSidebar);
+      }
+      if (toolsModalClose) {
+        toolsModalClose.addEventListener("click", closeToolsModal);
+      }
+      if (toolsModalCloseBtn) {
+        toolsModalCloseBtn.addEventListener("click", closeToolsModal);
+      }
+      if (toolsModal) {
+        toolsModal.addEventListener("click", (event) => {
+          if (event.target === toolsModal) {
+            closeToolsModal();
+          }
+        });
       }
 
       document.addEventListener("click", handleSidebarMenuTriggerClick);

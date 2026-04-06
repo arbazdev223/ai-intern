@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld("assistantAPI", {
     ipcRenderer.invoke("assistant:extract-ocr", {
       base64Screenshot
     }),
+  getAppVersion: () => ipcRenderer.invoke("assistant:get-app-version"),
   getCurrentApp: () => ipcRenderer.invoke("assistant:get-current-app"),
   getFloatingButtonPosition: () => ipcRenderer.invoke("assistant:get-floating-button-position"),
   getExpandState: () => ipcRenderer.invoke("assistant:get-expand-state"),

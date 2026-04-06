@@ -206,6 +206,13 @@ function registerIpcHandlers(options = {}) {
     windowManager.showChatWindow();
   });
 
+  ipcMain.handle("assistant:get-app-version", () => {
+    if (!app || typeof app.getVersion !== "function") {
+      return "";
+    }
+    return String(app.getVersion() || "");
+  });
+
   ipcMain.handle("assistant:get-current-app", () => windowManager.getCurrentApp());
 
   ipcMain.handle("assistant:get-floating-button-position", () => {
