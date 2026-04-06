@@ -1,8 +1,11 @@
 const { autoUpdater } = require("electron-updater");
 
+const DEFAULT_UPDATE_OWNER = "arbazdev223";
+const DEFAULT_UPDATE_REPO = "ai-intern";
+
 function getGithubFeedConfig() {
-  const owner = String(process.env.IFDA_UPDATE_OWNER || "").trim();
-  const repo = String(process.env.IFDA_UPDATE_REPO || "").trim();
+  const owner = String(process.env.IFDA_UPDATE_OWNER || DEFAULT_UPDATE_OWNER).trim();
+  const repo = String(process.env.IFDA_UPDATE_REPO || DEFAULT_UPDATE_REPO).trim();
   const token = String(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "").trim();
 
   if (!owner || !repo) {
