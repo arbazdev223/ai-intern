@@ -309,16 +309,13 @@ Your job:
   function buildNotConfirmedFullFormResponse(options = {}) {
     const safeAcronym = String(options.acronym || "this term").trim();
     const lines = [
-      "### Not Confirmed",
-      `Mujhe \`${safeAcronym}\` ka verified full form reliable web sources me clear nahi mila, isliye main guess nahi karunga.`,
-      "",
-      "### Next Step",
-      "- Official website ya trusted source ka exact link bhejo. Main uske basis par verified answer dunga."
+      `Mujhe ${safeAcronym} ka verified full form reliable web sources me clear nahi mila, isliye main guess nahi karunga.`,
+      "Agar aap official website ya trusted source ka exact link bhej do, to main us basis par confirm karke bata dunga."
     ];
 
     const sourceLines = formatWebSources(options.webResult, 4);
     if (sourceLines.length > 0) {
-      lines.push("", "### Sources Checked", ...sourceLines);
+      lines.push("", "Checked sources:", ...sourceLines);
     }
 
     return lines.join("\n");
@@ -327,14 +324,11 @@ Your job:
   function buildVerifiedFullFormResponse(options = {}) {
     const safeAcronym = String(options.acronym || "").trim();
     const safeExpansion = String(options.expansion || "").trim();
-    const lines = [
-      "### Full Form",
-      `\`${safeAcronym}\` ka full form **${safeExpansion}** hai.`
-    ];
+    const lines = [`${safeAcronym} ka full form ${safeExpansion} hai.`];
 
     const sourceLines = formatWebSources(options.webResult, 3);
     if (sourceLines.length > 0) {
-      lines.push("", "### Sources", ...sourceLines);
+      lines.push("", "Sources:", ...sourceLines);
     }
 
     return lines.join("\n");
@@ -358,7 +352,7 @@ Your job:
 
     const lines = [];
     if (summary) {
-      lines.push(summary);
+      lines.push(`Based on general understanding, ${summary}`);
     } else {
       const promptPreview = String(userPrompt || "").trim();
       lines.push(
@@ -369,16 +363,39 @@ Your job:
     }
 
     if (relatedTopics.length > 0) {
-      lines.push("", "### Key Topics");
-      relatedTopics.forEach((topic) => lines.push(`- ${topic}`));
-    }
-
-    const sourceLines = formatWebSources(webResult, 5);
-    if (sourceLines.length > 0) {
-      lines.push("", "### Sources", ...sourceLines);
+      lines.push("", `Simple examples: ${relatedTopics.slice(0, 3).join(", ")}`);
+      lines.push(
+        "In short, agar aap chaho to main in points me se kisi ek topic ko step-by-step deeply explain kar sakta hoon."
+      );
+    } else {
+      lines.push(
+        "Agar aap deep explanation chahte ho, to topic thoda specific likho (example: Iran-US conflict timeline, causes, impact)."
+      );
     }
 
     return lines.join("\n");
+  }
+
+  function wantsDeepWebExplanation(userPrompt) {
+    const text = String(userPrompt || "").toLowerCase();
+    if (!text) {
+      return false;
+    }
+
+    const deepPatterns = [
+      /\bdeep\b/,
+      /\bdeeply\b/,
+      /\bdetailed\b/,
+      /\bin\s+detail\b/,
+      /\bdetail\s+me\b/,
+      /\bdeep\s+me\b/,
+      /\bexplain\b/,
+      /\bexample\b/,
+      /\banalysis\b/,
+      /\btimeline\b/
+    ];
+
+    return deepPatterns.some((pattern) => pattern.test(text)) || text.length > 80;
   }
 
   function buildWebSearchFactsBlock(webResult) {
@@ -517,7 +534,7 @@ Your job:
         : "Abhi reliable live headlines clear nahi mili. Thoda specific pucho (country/topic/time window), phir main exact update dunga.";
     }
 
-    const lines = ["### Abhi Kya Chal Raha Hai"];
+    const lines = ["Based on recent reports, ye situation abhi is direction me dikh rahi hai:"];
     sources.forEach((item) => {
       const title = normalizeHeadline(item && item.title ? item.title : "");
       const sourceName = String(item && item.sourceName ? item.sourceName : item && item.source ? item.source : "").trim();
@@ -526,18 +543,168 @@ Your job:
         return;
       }
       const compactSnippet = snippet.length > 92 ? `${snippet.slice(0, 89)}...` : snippet;
-      const detail = compactSnippet ? ` - ${compactSnippet}` : "";
-      lines.push(`- ${title}${sourceName ? ` (${sourceName})` : ""}${detail}`);
+      const detail = compactSnippet ? ` ${compactSnippet}` : "";
+      lines.push(`${title}${sourceName ? ` (${sourceName})` : ""}.${detail}`);
     });
 
     lines.push(
       "",
-      "### Quick Take",
-      "- Ye headlines live feeds se aayi hain, isliye situation fast change ho sakti hai.",
-      "- Agar chaho to main India-impact ya kisi ek topic ka deep update nikal deta hoon."
+      "As of latest available information, situation quickly change ho sakti hai, so reliable updates follow karte rehna important hai."
     );
 
     return lines.join("\n");
+  }
+
+  function buildCurrentEventsStructuredResponse(userPrompt, webResult, optionsArg = {}) {
+    function cleanText(value) {
+      return String(value || "")
+        .replace(/\[BEGIN EXTERNAL CONTENT\]\s*/gi, "")
+        .replace(/\s*\[END EXTERNAL CONTENT\]/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/https?:\/\/\S+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function scoreSource(itemText, queryText) {
+      const text = String(itemText || "").toLowerCase();
+      if (!text) {
+        return -10;
+      }
+
+      const queryTokens = String(queryText || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((token) => token.length > 2)
+        .slice(0, 16);
+
+      let score = 0;
+      queryTokens.forEach((token) => {
+        if (text.includes(token)) {
+          score += 2;
+        }
+      });
+
+      const noisySignals = ["biography", "lyrics", "song", "class", "prelims", "exam", "program", "devotional"];
+      noisySignals.forEach((token) => {
+        if (text.includes(token)) {
+          score -= 2;
+        }
+      });
+
+      return score;
+    }
+
+    const summary = cleanText(webResult && webResult.summary ? webResult.summary : "");
+    const sources = Array.isArray(webResult && webResult.sources)
+      ? webResult.sources
+          .map((item) => ({
+            title: cleanText(item && item.title ? item.title : ""),
+            snippet: cleanText(item && item.snippet ? item.snippet : ""),
+            source: cleanText(item && item.source ? item.source : "")
+          }))
+          .map((item) => ({
+            ...item,
+            score: scoreSource(`${item.title} ${item.snippet}`, userPrompt)
+          }))
+          .filter((item) => item.title)
+          .sort((left, right) => right.score - left.score)
+          .slice(0, 4)
+      : [];
+
+    const reliableSources = sources.filter((item) => item.score >= 1);
+
+    if (reliableSources.length === 0) {
+      const promptPreview = String(userPrompt || "").trim();
+      return promptPreview
+        ? `Abhi reliable live headlines clear nahi mili for: ${promptPreview}. Thoda specific pucho (country/topic/time window), phir main exact update dunga.`
+        : "Abhi reliable live headlines clear nahi mili. Thoda specific pucho (country/topic/time window), phir main exact update dunga.";
+    }
+
+    const useHeadings = Boolean(optionsArg.useHeadings);
+
+    const contextLine = summary
+      ? summary
+      : "Latest snippets show ongoing geopolitical tension, policy signaling, and regional risk discussion.";
+
+    const exampleLines = reliableSources.map((item) => {
+      const detail = item.snippet ? ` - ${item.snippet}` : "";
+      const sourceTag = item.source ? ` (${item.source})` : "";
+      return `- ${item.title}${sourceTag}${detail}`;
+    });
+
+    if (!useHeadings) {
+      return [
+        `Based on recent reports, ${contextLine}`,
+        "",
+        ...exampleLines,
+        "",
+        "As of latest available information, situation quickly change ho sakti hai, so reliable updates follow karte rehna important hai."
+      ].join("\n");
+    }
+
+    const lines = [
+      "### Quick Summary",
+      `Based on recent reports, ${contextLine}`,
+      "",
+      "### Context",
+      "Iran-U.S. tensions are usually discussed through security, sanctions, regional alliances, and nuclear-policy concerns. Exact battlefield claims can change quickly and should be cross-verified.",
+      "",
+      "### Verified Examples From Current Search",
+      ...exampleLines,
+      "",
+      "### Practical Takeaway",
+      "Situation is fluid. For reliable understanding, track multiple trusted outlets and focus on confirmed updates rather than single-source claims."
+    ];
+
+    return lines.join("\n");
+  }
+
+  function getCautiousPrefixForPrompt(userPrompt) {
+    const text = String(userPrompt || "");
+    if (/[\u0900-\u097F]/.test(text)) {
+      return "Main galat ho sakta hoon, lekin available reports ke base par, ";
+    }
+    if (/\b(kya|kaise|hai|me|mujhe|bata|samjha)\b/i.test(text)) {
+      return "Main galat ho sakta hoon, lekin available reports ke base par, ";
+    }
+    return "I may be wrong, but based on available reports, ";
+  }
+
+  function enforceCautiousCurrentEventsAnswer(text, userPrompt) {
+    const safe = String(text || "").trim();
+    if (!safe) {
+      return safe;
+    }
+    if (!isCurrentEventsPrompt(userPrompt)) {
+      return safe;
+    }
+
+    let normalized = safe;
+
+    // Replace a known high-risk hard-claim pattern with cautious wording.
+    normalized = normalized.replace(
+      /the\s+u\.?s\.?\s+attacked\s+three[^.]*?(fordow|isfahan|natanz)[^.]*\./i,
+      "Some reports in the available snippets mention alleged strikes related to Iranian nuclear facilities (including Fordow, Isfahan, and Natanz), but exact operational details should be cross-verified from multiple trusted outlets."
+    );
+
+    const hasCautiousPhrase =
+      /i may be wrong|based on available reports|based on recent reports|according to reports|as of latest available information|main galat ho sakta hoon|reports ke base par/i.test(
+        normalized
+      );
+
+    const hasHighConfidenceConflictClaim =
+      /\b(u\.?s\.?|united states|iran|israel)\b/i.test(normalized) &&
+      /\b(attacked|bombed|destroyed|killed|directly attacked|confirmed strike|will last|definitely)\b/i.test(
+        normalized
+      );
+
+    if (hasHighConfidenceConflictClaim && !hasCautiousPhrase) {
+      normalized = `${getCautiousPrefixForPrompt(userPrompt)}${normalized.charAt(0).toLowerCase()}${normalized.slice(1)}`;
+    }
+
+    return normalized;
   }
 
   async function synthesizeWebSearchResponse(optionsArg = {}) {
@@ -551,20 +718,24 @@ Your job:
       return buildWebSearchDirectResponse(webResult, userPrompt);
     }
 
+    const deepMode = wantsDeepWebExplanation(userPrompt);
+
     const synthesisPrompt = [
-      "You are summarizing web search findings for a student.",
+      "You are a smart teacher assistant explaining search findings to a student.",
       "Use only the provided facts/snippets. Do not invent events.",
+      "Write in the same language as the user input. Do not mix languages.",
       "If snippets are generic (homepage/about text), say clearly that exact breaking details are limited.",
-      "Write in simple Hinglish.",
-      "Keep it concise and useful.",
-      "Do not include a Sources section.",
-      "",
-      "Output format:",
-      "### Abhi Kya Chal Raha Hai",
-      "- 3 to 5 bullets",
-      "",
-      "### Quick Take",
-      "- 1 to 2 bullets",
+      "Do not invent specific dates, attacks, statements, or locations unless explicitly present in the provided facts.",
+      deepMode
+        ? "User asked for depth: give a detailed but simple explanation in 4 parts: simple answer, known context, 2-3 concrete examples from provided facts, and practical takeaway."
+        : "Keep it concise, natural, conversational, and easy to read.",
+      deepMode
+        ? "Use short paragraphs or bullets for clarity, but avoid markdown headings."
+        : "Start with simple answer, then one short example, then optional extra detail.",
+      "Light emoji use is allowed for readability.",
+      "Do not use markdown headings or report format.",
+      "Avoid report style formatting.",
+      "If query is about real-world events, use safe phrasing like 'Based on recent reports' or 'As of latest available information'.",
       "",
       `User question: ${userPrompt || "(empty)"}`,
       "",
@@ -588,7 +759,7 @@ Your job:
         });
         const safeText = String(text || "").trim();
         if (safeText) {
-          return safeText;
+          return enforceCautiousCurrentEventsAnswer(safeText, userPrompt);
         }
       }
 
@@ -596,7 +767,7 @@ Your job:
         const text = await modelService.callGeminiText(synthesisPrompt);
         const safeText = String(text || "").trim();
         if (safeText) {
-          return safeText;
+          return enforceCautiousCurrentEventsAnswer(safeText, userPrompt);
         }
       }
     } catch (_error) {}
@@ -625,11 +796,11 @@ Your job:
       "Use only provided facts. Do not add any new event or claim.",
       "Keep the same meaning as draft, just improve clarity and relevance.",
       "Reject sports/entertainment/devotional framing unless facts are explicitly about policy/economy/conflict/government news.",
-      "Write concise Hinglish.",
-      "Do not include Sources section.",
-      "Output headings exactly:",
-      "### Abhi Kya Chal Raha Hai",
-      "### Quick Take",
+      "Write in the same language as user input.",
+      "Keep it concise, conversational, and direct.",
+      "Start with simple answer, then one example, then optional extra detail.",
+      "Do not use markdown headings unless user explicitly asks.",
+      "Use safe phrasing for uncertain latest updates.",
       "",
       `User question: ${userPrompt || "(empty)"}`,
       "",
@@ -656,7 +827,7 @@ Your job:
         });
         const safeText = String(text || "").trim();
         if (safeText) {
-          return safeText;
+          return enforceCautiousCurrentEventsAnswer(safeText, userPrompt);
         }
       }
 
@@ -664,7 +835,7 @@ Your job:
         const text = await modelService.callGeminiText(refinementPrompt);
         const safeText = String(text || "").trim();
         if (safeText) {
-          return safeText;
+          return enforceCautiousCurrentEventsAnswer(safeText, userPrompt);
         }
       }
     } catch (_error) {}
@@ -856,15 +1027,18 @@ Your job:
     return positivePatterns.some((pattern) => pattern.test(text));
   }
 
-  function generateCasualReply(input) {
-    const text = String(input || "").toLowerCase().trim();
-    const asksHelp = /\b(help|madad|chahiye|assist|guide)\b/i.test(text);
+  function generateCasualReply(_input, language = "english") {
+    const normalizedLanguage = String(language || "english").toLowerCase();
 
-    if (asksHelp) {
-      return "Haan bolo 😊 kya help chahiye?";
+    if (normalizedLanguage === "hindi") {
+      return "जी, बताइए मैं कैसे मदद कर सकता हूँ?";
     }
 
-    return "Hey! 😊 Kya help chahiye?";
+    if (normalizedLanguage === "hinglish") {
+      return "Haan bolo 🙂 kya help chahiye?";
+    }
+
+    return "Hi! How can I help you?";
   }
 
   function selectFileContent(outputType, responseText, userPrompt) {
@@ -1320,7 +1494,10 @@ Your job:
     return text;
   }
 
-  async function classifyIntent(userPrompt, optionsArg = {}) {
+  async function classifyTaskIntent(userPrompt, optionsArg = {}) {
+    if (intentService && typeof intentService.classifyTaskIntent === "function") {
+      return intentService.classifyTaskIntent(userPrompt, optionsArg);
+    }
     return intentService.classifyIntent(userPrompt, optionsArg);
   }
 
@@ -1403,14 +1580,22 @@ Your job:
       intentService && typeof intentService.detectResponseMode === "function"
         ? intentService.detectResponseMode(userPrompt)
         : "detailed";
+    const conversationIntent =
+      intentService && typeof intentService.classifyIntent === "function"
+        ? intentService.classifyIntent(userPrompt)
+        : "meaningful";
+    const language =
+      intentService && typeof intentService.detectLanguage === "function"
+        ? intentService.detectLanguage(userPrompt)
+        : "english";
     const tone =
       intentService && typeof intentService.getTone === "function"
         ? intentService.getTone(userPrompt)
         : "formal";
     const isCasualMode = tone === "casual";
 
-    if (!rawPrompt && isCasualMode) {
-      const casualReply = generateCasualReply(userPrompt);
+    if (!rawPrompt && conversationIntent === "greeting") {
+      const casualReply = generateCasualReply(userPrompt, language);
       return {
         type: "text",
         content: casualReply,
@@ -1423,25 +1608,9 @@ Your job:
       };
     }
 
-    const isGreetingOnly =
-      intentService && typeof intentService.isGreeting === "function"
-        ? intentService.isGreeting(userPrompt)
-        : /^(hi+|hey+|hello+)$/i.test(String(userPrompt || "").trim());
-
-    if (!rawPrompt && isGreetingOnly) {
-      return {
-        response: "Hey! 😊 How can I help you?",
-        usedModel: "none",
-        provider: "local-greeting",
-        currentApp: options.getCurrentApp(),
-        openAIEnabled: Boolean(getOpenAIClient()),
-        geminiEnabled: Boolean(getGeminiClient())
-      };
-    }
-
     const explicitFileRequest = detectExplicitFileRequest(userPrompt);
     const intentResult = !rawPrompt
-      ? await classifyIntent(userPrompt, { hasScreenshot: Boolean(screenshotBase64) })
+      ? await classifyTaskIntent(userPrompt, { hasScreenshot: Boolean(screenshotBase64) })
       : { intent: "general", needs_web: false, needs_rag: false };
     const normalizedIntent = String(intentResult && intentResult.intent ? intentResult.intent : "general");
     const needsWeb = Boolean(intentResult && intentResult.needs_web);
@@ -1450,15 +1619,22 @@ Your job:
     const geminiEnabled = Boolean(getGeminiClient());
 
     const modeInstruction =
-      responseMode === "minimal"
+      conversationIntent === "casual" || responseMode === "minimal"
         ? "Respond in exactly one line. Be natural and concise."
         : responseMode === "short"
           ? "Respond briefly in 2-4 sentences. Keep it clear and direct."
-          : "Respond with full structure using clear headings and concise bullet points where helpful.";
+          : "Respond clearly in natural teacher-like conversation. Start simple, then example, then optional extra detail. Avoid headings unless user asks.";
     const toneInstruction =
       tone === "casual"
         ? "Respond in a friendly, natural, conversational tone. No headings."
         : "";
+    const languageInstruction = "Respond in the same language as the user input. Do not mix languages.";
+    const responseIntentInstruction =
+      conversationIntent === "casual"
+        ? "Respond in 1-2 lines. Keep it natural and conversational."
+        : conversationIntent === "meaningful"
+          ? "Respond helpfully to the user's meaning. Ask a brief follow-up only if needed. Do not greet again."
+          : "";
 
     if (normalizedIntent === "hybrid") {
       const preferredModelName = openAIEnabled ? modelService.getOpenAIModel() : modelService.getGeminiModel();
@@ -1478,7 +1654,7 @@ Your job:
         toolsData: null
       });
 
-      const hybridPrompt = `${hybridPromptBase}\n\n${modeInstruction}${toneInstruction ? `\n${toneInstruction}` : ""}\n\nProvide an explanation first. Keep it accurate and useful before image generation.`;
+      const hybridPrompt = `${hybridPromptBase}\n\n${modeInstruction}${toneInstruction ? `\n${toneInstruction}` : ""}\n${languageInstruction}${responseIntentInstruction ? `\n${responseIntentInstruction}` : ""}\n\nProvide an explanation first. Keep it accurate and useful before image generation.`;
 
       let explanationText = "I can explain this and generate an image for it.";
       let explanationUsedModel = "none";
@@ -1594,13 +1770,10 @@ Your job:
       const openAIEnabledForWeb = Boolean(getOpenAIClient());
       const geminiEnabledForWeb = Boolean(getGeminiClient());
       const currentEventsMode = isCurrentEventsPrompt(userPrompt);
+      const deepCurrentEvents = wantsDeepWebExplanation(userPrompt);
       const synthesized = currentEventsMode
-        ? await refineCurrentEventsResponse({
-            userPrompt,
-            webResult: webSearchResult,
-            draftResponse: buildCurrentEventsHeadlinesResponse(userPrompt, webSearchResult),
-            openAIEnabled: openAIEnabledForWeb,
-            geminiEnabled: geminiEnabledForWeb
+        ? buildCurrentEventsStructuredResponse(userPrompt, webSearchResult, {
+            useHeadings: deepCurrentEvents
           })
         : await synthesizeWebSearchResponse({
             userPrompt,
@@ -1614,9 +1787,7 @@ Your job:
         ? formatWebSources(webSearchResult, 8, { requireHttpUrl: true })
         : formatWebSources(webSearchResult, 5);
       const responseWithSources =
-        sourceLines.length > 0 && !isNoReliableHeadline
-          ? `${synthesizedText}\n\n### Sources\n${sourceLines.join("\n")}`
-          : synthesizedText;
+        synthesizedText;
 
       return {
         response: responseWithSources || buildWebSearchDirectResponse(webSearchResult, userPrompt),
@@ -1654,8 +1825,8 @@ Your job:
       userPrompt.length > 180;
 
     const finalPrompt = expectsLongResponse
-      ? `${finalPromptBase}${modeInstruction ? `\n\n${modeInstruction}` : ""}${toneInstruction ? `\n${toneInstruction}` : ""}\n\nMake the response comprehensive and in-depth.`
-      : `${finalPromptBase}${modeInstruction ? `\n\n${modeInstruction}` : ""}${toneInstruction ? `\n${toneInstruction}` : ""}`;
+      ? `${finalPromptBase}${modeInstruction ? `\n\n${modeInstruction}` : ""}${toneInstruction ? `\n${toneInstruction}` : ""}\n${languageInstruction}${responseIntentInstruction ? `\n${responseIntentInstruction}` : ""}\n\nMake the response comprehensive and in-depth.`
+      : `${finalPromptBase}${modeInstruction ? `\n\n${modeInstruction}` : ""}${toneInstruction ? `\n${toneInstruction}` : ""}\n${languageInstruction}${responseIntentInstruction ? `\n${responseIntentInstruction}` : ""}`;
 
     if (screenshotBase64 && !allowExternalScreenshot) {
       return {
@@ -1696,7 +1867,7 @@ Your job:
         modelBudget: budget
       });
 
-      const skipWeakResponseCheck = responseMode === "minimal";
+      const skipWeakResponseCheck = responseMode === "minimal" || conversationIntent === "casual";
       const qualityCheckedResponse = skipWeakResponseCheck
         ? String(responsePayload.response || "")
         : await rewriteIfWeakResponse(responsePayload.response, {

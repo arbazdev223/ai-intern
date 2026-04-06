@@ -787,7 +787,7 @@
 
       const author = document.createElement("span");
       author.className = "message-author";
-      author.textContent = safeRole === "user" ? "You" : "Assistant";
+      author.textContent = safeRole === "user" ? "" : "Assistant";
 
       const bubble = document.createElement("div");
       bubble.className = "bubble chat-bubble";

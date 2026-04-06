@@ -51,6 +51,19 @@
               </span>
               Chats
             </h3>
+            <div class="chat-search-container">
+              <div class="chat-search-box">
+                <span class="search-icon" aria-hidden="true">🔍</span>
+                <input
+                  id="chat-search"
+                  type="text"
+                  placeholder="Search chats..."
+                  aria-label="Search chats"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+            </div>
             <ul id="conversationList" class="conversation-list sidebar-list" aria-label="Conversation list"></ul>
           </section>
 
@@ -165,7 +178,7 @@
 
             <!-- Empty state -->
             <div class="n-empty-state" id="nEmptyState">
-              <div class="n-empty-icon" aria-hidden="true">🤖</div>
+              <div class="n-empty-icon" aria-hidden="true"><img src="public/mundi.png" alt="Empty state icon" /></div>
               <h2 class="n-empty-title">How can I help today?</h2>
               <p class="n-empty-sub">Ask anything, generate ideas, or solve a problem</p>
             </div>
@@ -218,6 +231,11 @@
               <input id="externalScreenToggle" type="checkbox" />
               <span id="externalScreenToggleLabel">External AI: OFF</span>
             </label>
+            <label class="privacy-toggle" title="Enable or disable voice mode.">
+              <input id="voiceToggle" type="checkbox" />
+              <span id="voiceToggleLabel">Voice Mode: OFF</span>
+            </label>
+            <div id="voiceLivePreview" class="voice-live-preview hidden" aria-live="polite"></div>
             <div id="statusText" class="status-text" role="status" aria-live="polite">Ready</div>
           </div>
 

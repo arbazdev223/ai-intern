@@ -10,6 +10,8 @@
     let isBusy = false;
     let openingAnalysisRunning = false;
     let longRequestTimer = null;
+    let chatSearchQuery = "";
+    let chatSearchDebounceTimer = null;
 
     function loadExternalScreenConsent() {
       if (typeof localStorage === "undefined") {
@@ -168,9 +170,21 @@
 
       refs.conversationList.innerHTML = "";
 
-      [...chatSessions]
-        .sort((left, right) => right.updatedAt - left.updatedAt)
-        .forEach((session) => {
+      const allChats = [...chatSessions].sort((left, right) => right.updatedAt - left.updatedAt);
+      const query = String(chatSearchQuery || "").trim().toLowerCase();
+      const filteredChats = query
+        ? allChats.filter((session) => sessionMatchesQuery(session, query))
+        : allChats;
+
+      if (filteredChats.length === 0) {
+        const emptyItem = document.createElement("li");
+        emptyItem.className = "conversation-empty-state";
+        emptyItem.textContent = "No chats found";
+        refs.conversationList.appendChild(emptyItem);
+        return;
+      }
+
+      filteredChats.forEach((session) => {
           const item = document.createElement("li");
           item.className = "conversation-item";
           item.dataset.chatId = session.id;
@@ -186,8 +200,13 @@
           selectBtn.className = "conversation-select";
           selectBtn.dataset.action = "select";
           selectBtn.dataset.chatId = session.id;
-          selectBtn.textContent = options.sessionStore.createTitleFromMessage(session.title || "New chat");
-          selectBtn.title = selectBtn.textContent;
+          const titleText = options.sessionStore.createTitleFromMessage(session.title || "New chat");
+          selectBtn.title = titleText;
+          if (query) {
+            selectBtn.innerHTML = highlightMatch(titleText, query);
+          } else {
+            selectBtn.textContent = titleText;
+          }
 
           const menu = document.createElement("details");
           menu.className = "sidebar-item-menu conversation-actions";
@@ -223,6 +242,73 @@
           item.appendChild(topRow);
           refs.conversationList.appendChild(item);
         });
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function escapeRegExp(value) {
+      return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    function highlightMatch(text, query) {
+      const safeText = String(text || "");
+      const trimmedQuery = String(query || "").trim();
+      if (!trimmedQuery) {
+        return escapeHtml(safeText);
+      }
+
+      const escapedQuery = escapeRegExp(trimmedQuery);
+      const regex = new RegExp(`(${escapedQuery})`, "ig");
+      return escapeHtml(safeText).replace(regex, "<mark>$1</mark>");
+    }
+
+    function sessionMatchesQuery(session, query) {
+      const safeQuery = String(query || "").trim().toLowerCase();
+      if (!safeQuery) {
+        return true;
+      }
+
+      const title = options.sessionStore
+        .createTitleFromMessage(session && session.title ? session.title : "New chat")
+        .toLowerCase();
+      if (title.includes(safeQuery)) {
+        return true;
+      }
+
+      const messages = Array.isArray(session && session.messages) ? session.messages : [];
+      return messages.some((msg) => {
+        const content = String(msg && msg.content ? msg.content : "").toLowerCase();
+        return content.includes(safeQuery);
+      });
+    }
+
+    function applyChatSearch(nextValue) {
+      chatSearchQuery = String(nextValue || "");
+      renderConversationList();
+    }
+
+    function handleChatSearchInput(event) {
+      const value = String(event && event.target ? event.target.value : "");
+      const shouldDebounce = chatSessions.length > 100;
+      if (!shouldDebounce) {
+        applyChatSearch(value);
+        return;
+      }
+
+      if (chatSearchDebounceTimer) {
+        clearTimeout(chatSearchDebounceTimer);
+      }
+
+      chatSearchDebounceTimer = setTimeout(() => {
+        applyChatSearch(value);
+      }, 200);
     }
 
     function switchChat(sessionId, switchOptions = {}) {
@@ -985,6 +1071,9 @@
       }
       if (refs.conversationList) {
         refs.conversationList.addEventListener("click", handleConversationListClick);
+      }
+      if (refs.chatSearchInput) {
+        refs.chatSearchInput.addEventListener("input", handleChatSearchInput);
       }
 
       options.assistantAPI.onActiveApp((appName) => {

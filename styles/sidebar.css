@@ -19,6 +19,14 @@
     border-color 0.24s ease;
 }
 
+.sidebar,
+.assistant-sidebar {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
 .assistant-shell.sidebar-collapsed .assistant-sidebar {
   width: 0;
   flex-basis: 0;
@@ -214,6 +222,97 @@
   padding: 0;
   display: grid;
   gap: 8px;
+}
+
+.chat-search-container {
+  width: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.chat-search-box {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: #f1f5f9;
+  border-radius: 12px;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.chat-search-box:focus-within {
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.chat-search-box input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.chat-search-box input::placeholder {
+  color: #9ca3af;
+}
+
+.search-icon {
+  font-size: 14px;
+  color: #64748b;
+  line-height: 1;
+}
+
+.conversation-empty-state {
+  border: 1px dashed rgba(148, 163, 184, 0.5);
+  border-radius: 12px;
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(248, 250, 252, 0.75);
+}
+
+.conversation-select mark {
+  background: rgba(250, 204, 21, 0.33);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.conversation-list {
+  margin-top: 4px;
+}
+
+.chat-item,
+.conversation-item {
+  border-radius: 10px;
+  padding: 8px 10px;
+  transition: all 0.2s ease;
+}
+
+.chat-item:hover,
+.conversation-item:hover {
+  background: #f8fafc;
+}
+
+.chat-item.active,
+.conversation-item.active {
+  background: #e0e7ff;
+}
+
+.chat-list {
+  margin-top: 4px;
+}
+
+.no-chat-results {
+  padding: 10px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12px;
 }
 
 .conversation-list {

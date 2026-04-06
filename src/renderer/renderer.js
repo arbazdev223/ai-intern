@@ -7,6 +7,7 @@
       attachmentPreviewImage: document.getElementById("attachmentPreviewImage"),
       chatForm: document.getElementById("chatForm"),
       chatMessages: document.getElementById("chatMessages"),
+      chatSearchInput: document.getElementById("chat-search"),
       clearAttachmentButton: document.getElementById("clearAttachmentButton"),
       closePromptBrowserButton: document.getElementById("closePromptBrowserButton"),
       conversationList: document.getElementById("conversationList"),
@@ -50,6 +51,9 @@
       statusText: document.getElementById("statusText"),
       typingIndicator: document.getElementById("typingIndicator"),
       typingLabel: document.querySelector("#typingIndicator .typing-label"),
+      voiceLivePreview: document.getElementById("voiceLivePreview"),
+      voiceToggle: document.getElementById("voiceToggle"),
+      voiceToggleLabel: document.getElementById("voiceToggleLabel"),
       voiceStatus: document.getElementById("voiceStatus")
     };
   }

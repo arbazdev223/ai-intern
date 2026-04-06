@@ -323,7 +323,22 @@ function registerIpcHandlers(options = {}) {
       validateTtsPayload(payload);
       return await voiceService.synthesizeSpeech(payload);
     } catch (error) {
-      throw new Error(`TTS failed: ${sanitizeErrorMessage(error)}`);
+      const safeMessage = sanitizeErrorMessage(error);
+      const lower = String(safeMessage || "").toLowerCase();
+      const isPlanLimit =
+        lower.includes("paid_plan_required") ||
+        (lower.includes("elevenlabs tts failed") && lower.includes("(402)"));
+
+      if (isPlanLimit) {
+        return {
+          audioBase64: "",
+          contentType: "audio/mpeg",
+          unavailableReason: "paid_plan_required",
+          message: "TTS unavailable for this ElevenLabs voice on current plan."
+        };
+      }
+
+      throw new Error(`TTS failed: ${safeMessage}`);
     }
   });
 

@@ -2,30 +2,20 @@
   function createVoiceModeManager(options = {}) {
     const refs = options.refs || {};
     const assistantAPI = options.assistantAPI;
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const supportsRecorder = Boolean(
       navigator.mediaDevices &&
         typeof navigator.mediaDevices.getUserMedia === "function" &&
         typeof window.MediaRecorder === "function"
     );
 
-    let recognition = null;
     let voiceEnabled = false;
-    let listening = false;
-    let lastTranscript = "";
-    let restartTimer = null;
-    let sendTimer = null;
-    let silenceTimer = null;
-    let activeAudio = null;
-    let pausedForSpeak = false;
-    let recorderMode = false;
     let recording = false;
-    let voiceBusy = false;
-    let voiceHistory = [];
+    let pausedForSpeak = false;
     let mediaRecorder = null;
     let mediaStream = null;
     let recordedChunks = [];
     let recordStopTimer = null;
+    let recorderRestartTimer = null;
     let audioContext = null;
     let analyser = null;
     let analyserData = null;
@@ -33,15 +23,18 @@
     let recordStartedAt = 0;
     let lastVoiceAt = 0;
     let hadVoice = false;
-    const SEND_AFTER_MS = 900;
-    const SILENCE_TIMEOUT_MS = 6000;
-    const MAX_RECORD_MS = 12000;
-    const VOICE_CONTEXT_MAX = 8;
-    const SHOW_TRANSCRIPT_IN_INPUT = false;
-    const RECORD_SILENCE_MS = 900;
-    const MIN_RECORD_MS = 700;
-    const SILENCE_RMS_THRESHOLD = 0.015;
-    const NO_SPEECH_MAX_MS = 6000;
+    let lastCommittedTranscript = "";
+    let lastCommitAt = 0;
+    let activeAudio = null;
+    let noSpeechAutoOffCount = 0;
+
+    const MAX_RECORD_MS = 14000;
+    const RECORD_SILENCE_MS = 3200;
+    const MIN_RECORD_MS = 3000;
+    const SILENCE_RMS_THRESHOLD = 0.008;
+    const NO_SPEECH_MAX_MS = 9000;
+    const MIN_AUDIO_BYTES = 5000;
+    const VOICE_AUTO_OFF_AFTER_SILENT_TURNS = 1;
 
     function setStatus(text) {
       if (typeof options.setStatus === "function") {
@@ -53,7 +46,6 @@
       if (typeof localStorage === "undefined") {
         return;
       }
-
       try {
         localStorage.setItem("assistant.voiceEnabled", voiceEnabled ? "true" : "false");
       } catch (_error) {}
@@ -61,51 +53,54 @@
 
     function loadVoiceModeState() {
       if (typeof localStorage === "undefined") {
-        return false;
+        return true;
       }
-
       try {
-        return localStorage.getItem("assistant.voiceEnabled") === "true";
+        const raw = localStorage.getItem("assistant.voiceEnabled");
+        if (raw === null) {
+          return true;
+        }
+        return raw !== "false";
       } catch (_error) {
-        return false;
+        return true;
       }
     }
 
     function updateStatusChip(state, label) {
-      if (!refs.voiceStatus) {
-        return;
+      if (refs.voiceToggleLabel) {
+        refs.voiceToggleLabel.textContent = label.replace(/^Voice:\s*/i, "Voice Mode: ");
       }
-
-      refs.voiceStatus.textContent = label;
-      refs.voiceStatus.dataset.state = state;
+      if (refs.voiceStatus) {
+        refs.voiceStatus.textContent = label;
+        refs.voiceStatus.dataset.state = state;
+      }
+      if (refs.voiceToggle) {
+        refs.voiceToggle.checked = Boolean(voiceEnabled);
+      }
     }
 
-    function updateButtonState() {}
-
     function syncUiState() {
-      if (!SpeechRecognition && !supportsRecorder) {
+      if (!supportsRecorder) {
         updateStatusChip("unsupported", "Voice: Unavailable");
-        updateButtonState();
         return;
       }
 
       if (!voiceEnabled) {
         updateStatusChip("off", "Voice: Off");
-        updateButtonState();
         return;
       }
 
       if (pausedForSpeak) {
         updateStatusChip("speaking", "Speaking...");
-      } else if (recording) {
-        updateStatusChip("recording", "Recording...");
-      } else if (listening) {
-        updateStatusChip("listening", "Listening...");
-      } else {
-        updateStatusChip("on", "Voice: On");
+        return;
       }
 
-      updateButtonState();
+      if (recording) {
+        updateStatusChip("recording", "Listening...");
+        return;
+      }
+
+      updateStatusChip("on", "Voice: On");
     }
 
     function updatePromptInput(value) {
@@ -113,310 +108,108 @@
         return;
       }
 
-      if (!SHOW_TRANSCRIPT_IN_INPUT) {
-        return;
-      }
-
       refs.promptInput.value = String(value || "");
       refs.promptInput.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
-    function addVoiceMessage(role, content) {
-      const safeRole = role === "assistant" ? "assistant" : "user";
-      const safeContent = String(content || "").trim();
-      if (!safeContent) {
+    function updateLiveText(text) {
+      if (!refs.voiceLivePreview) {
         return;
       }
-      voiceHistory.push({ role: safeRole, content: safeContent });
-      if (voiceHistory.length > VOICE_CONTEXT_MAX) {
-        voiceHistory = voiceHistory.slice(-VOICE_CONTEXT_MAX);
+      const content = String(text || "").trim();
+      if (!content) {
+        refs.voiceLivePreview.textContent = "";
+        refs.voiceLivePreview.classList.add("hidden");
+        return;
       }
+      refs.voiceLivePreview.classList.remove("hidden");
+      refs.voiceLivePreview.textContent = content;
     }
 
-    function getVoiceContext() {
-      return voiceHistory.slice(-VOICE_CONTEXT_MAX);
+    function normalizeTranscript(rawText) {
+      return String(rawText || "")
+        .replace(/[\u0000-\u001F\u007F]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
     }
 
-    async function sendVoicePrompt(text) {
-      const trimmed = String(text || "").trim();
-      if (!trimmed) {
-        return;
+    function isLikelyGarbageTranscript(text) {
+      const normalized = normalizeTranscript(text);
+      if (!normalized) {
+        return true;
       }
 
-      if (voiceBusy) {
-        return;
+      if (/αñ|ΓÇ|Ã|â|█|�|┐|╢|╜|╕|╣|╛|╡/.test(normalized)) {
+        return true;
       }
 
-      if (!assistantAPI || typeof assistantAPI.sendPrompt !== "function") {
-        setStatus("Voice service unavailable.");
-        return;
+      const words = normalized
+        .toLowerCase()
+        .split(/\s+/)
+        .map((w) => w.replace(/[^\p{L}\p{N}]/gu, ""))
+        .filter(Boolean);
+
+      if (!words.length) {
+        return true;
       }
 
-      voiceBusy = true;
-      stopListening();
-      stopRecording();
-      setStatus("Sending voice message...");
+      if (words.length >= 5) {
+        const unique = new Set(words);
+        if (unique.size <= 2) {
+          return true;
+        }
+      }
 
+      return false;
+    }
+
+    function getPreferredSttLanguage() {
       try {
-        const response = await assistantAPI.sendPrompt({
-          userPrompt: trimmed,
-          contextMessages: getVoiceContext(),
-          memorySummary: "",
-          rawPrompt: false
-        });
-
-        const assistantText =
-          String((response && response.response) || "").trim() || "No response from the model.";
-        addVoiceMessage("user", trimmed);
-        addVoiceMessage("assistant", assistantText);
-        setStatus("Voice reply ready.");
-        await speak(assistantText);
-      } catch (error) {
-        const message = String(error && error.message ? error.message : "Voice request failed.");
-        setStatus(message);
-      } finally {
-        voiceBusy = false;
-        if (voiceEnabled && !pausedForSpeak) {
-          if (recorderMode) {
-            startRecording();
-          } else {
-            scheduleRestart();
-          }
+        const saved = String(localStorage.getItem("assistant.voiceLanguage") || "").trim().toLowerCase();
+        if (saved === "hi" || saved === "en") {
+          return saved;
         }
-      }
+      } catch (_error) {}
+      return "";
     }
 
-    function sendTranscript(text) {
-      const trimmed = String(text || "").trim();
-      if (!trimmed) {
-        return;
+    function appendTranscriptToInput(text) {
+      if (!refs.promptInput) {
+        return false;
+      }
+      const incoming = normalizeTranscript(text);
+      if (!incoming || incoming.length < 2) {
+        return false;
       }
 
-      if (typeof options.getBusy === "function" && options.getBusy()) {
-        return;
+      const dedupeKey = incoming.toLowerCase();
+      const now = Date.now();
+      if (dedupeKey === lastCommittedTranscript && now - lastCommitAt < 1200) {
+        return false;
       }
+      lastCommittedTranscript = dedupeKey;
+      lastCommitAt = now;
 
-      if (refs.promptInput && refs.promptInput.disabled) {
-        return;
+      const current = String(refs.promptInput.value || "").trim();
+      const nextValue = current ? `${current} ${incoming}` : incoming;
+      updatePromptInput(nextValue);
+      if (refs.promptInput) {
+        refs.promptInput.focus();
       }
-
-      sendVoicePrompt(trimmed);
-    }
-
-    function scheduleRestart() {
-      if (!voiceEnabled || pausedForSpeak || recorderMode || voiceBusy) {
-        return;
-      }
-
-      if (restartTimer) {
-        clearTimeout(restartTimer);
-      }
-
-      restartTimer = setTimeout(() => {
-        restartTimer = null;
-        startListening();
-      }, 450);
-    }
-
-    function clearTimers() {
-      if (restartTimer) {
-        clearTimeout(restartTimer);
-        restartTimer = null;
-      }
-      if (sendTimer) {
-        clearTimeout(sendTimer);
-        sendTimer = null;
-      }
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-        silenceTimer = null;
-      }
-    }
-
-    function scheduleSend() {
-      if (!voiceEnabled || pausedForSpeak) {
-        return;
-      }
-
-      if (sendTimer) {
-        clearTimeout(sendTimer);
-      }
-
-      sendTimer = setTimeout(() => {
-        sendTimer = null;
-        const toSend = String(lastTranscript || "").trim();
-        if (!toSend) {
-          return;
-        }
-        lastTranscript = "";
-        stopListening();
-        setStatus("Sending voice message...");
-        sendTranscript(toSend);
-      }, SEND_AFTER_MS);
-    }
-
-    function startSilenceTimer() {
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-      }
-
-      silenceTimer = setTimeout(() => {
-        silenceTimer = null;
-        if (!listening || pausedForSpeak) {
-          return;
-        }
-        if (!String(lastTranscript || "").trim()) {
-          stopListening();
-          setStatus("No voice detected. Try speaking closer to the mic.");
-          scheduleRestart();
-        }
-      }, SILENCE_TIMEOUT_MS);
-    }
-
-    function ensureRecognition() {
-      if (!SpeechRecognition || recognition) {
-        return;
-      }
-
-      recognition = new SpeechRecognition();
-      recognition.lang = navigator.language || "en-US";
-      recognition.interimResults = true;
-      recognition.continuous = false;
-
-      recognition.onstart = () => {
-        listening = true;
-        syncUiState();
-        startSilenceTimer();
-      };
-
-      recognition.onresult = (event) => {
-        let interim = "";
-        let finalText = "";
-
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const result = event.results[index];
-          const transcript = result && result[0] ? String(result[0].transcript || "") : "";
-          if (result && result.isFinal) {
-            finalText += transcript;
-          } else {
-            interim += transcript;
-          }
-        }
-
-        const combined = String(finalText || interim || "").trim();
-        if (combined) {
-          lastTranscript = combined;
-          updatePromptInput(combined);
-          scheduleSend();
-          setStatus(`Heard: ${combined.slice(0, 80)}`);
-        }
-        startSilenceTimer();
-      };
-
-      recognition.onend = () => {
-        listening = false;
-        syncUiState();
-
-        if (!voiceEnabled || pausedForSpeak) {
-          return;
-        }
-
-        scheduleRestart();
-      };
-
-      recognition.onerror = (event) => {
-        listening = false;
-        syncUiState();
-        const errorCode = event && event.error ? String(event.error) : "unknown";
-        if (errorCode === "not-allowed" || errorCode === "service-not-allowed") {
-          setStatus("Microphone access denied.");
-          voiceEnabled = false;
-          saveVoiceModeState();
-          syncUiState();
-          return;
-        }
-
-        if (errorCode === "network" && supportsRecorder) {
-          recorderMode = true;
-          setStatus("Speech service blocked. Switching to recorder mode.");
-          stopListening();
-          if (voiceEnabled) {
-            startRecording();
-          }
-          return;
-        }
-
-        setStatus(`Voice error: ${errorCode}`);
-        scheduleRestart();
-      };
-
-      recognition.onspeechend = () => {
-        startSilenceTimer();
-      };
-    }
-
-    function startListening() {
-      if (recorderMode) {
-        return;
-      }
-
-      if (!SpeechRecognition) {
-        setStatus("Voice input is not supported in this app.");
-        voiceEnabled = false;
-        saveVoiceModeState();
-        syncUiState();
-        return;
-      }
-
-      if (listening || pausedForSpeak) {
-        return;
-      }
-
-      ensureRecognition();
-      if (!recognition) {
-        return;
-      }
-
-      try {
-        lastTranscript = "";
-        clearTimers();
-        recognition.start();
-        startSilenceTimer();
-      } catch (_error) {
-        scheduleRestart();
-      }
-    }
-
-    function stopListening({ disable = false } = {}) {
-      if (disable) {
-        voiceEnabled = false;
-        saveVoiceModeState();
-      }
-
-      clearTimers();
-
-      if (recognition && listening) {
-        try {
-          recognition.stop();
-        } catch (_error) {}
-      }
-
-      listening = false;
-      syncUiState();
-    }
-
-    function stopAudio() {
-      if (activeAudio) {
-        activeAudio.pause();
-        activeAudio.src = "";
-        activeAudio = null;
-      }
+      return true;
     }
 
     function clearRecordTimer() {
       if (recordStopTimer) {
         clearTimeout(recordStopTimer);
         recordStopTimer = null;
+      }
+    }
+
+    function clearRecorderRestartTimer() {
+      if (recorderRestartTimer) {
+        clearTimeout(recorderRestartTimer);
+        recorderRestartTimer = null;
       }
     }
 
@@ -436,6 +229,28 @@
       lastVoiceAt = 0;
     }
 
+    async function ensureMediaStream() {
+      if (mediaStream) {
+        return mediaStream;
+      }
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          noiseSuppression: true,
+          echoCancellation: true,
+          autoGainControl: true
+        }
+      });
+      return mediaStream;
+    }
+
+    function releaseMediaStream() {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        mediaStream = null;
+      }
+    }
+
     function cleanupRecorder() {
       clearRecordTimer();
       stopSilenceDetection();
@@ -445,10 +260,6 @@
         mediaRecorder.onstop = null;
         mediaRecorder.onerror = null;
         mediaRecorder = null;
-      }
-      if (mediaStream) {
-        mediaStream.getTracks().forEach((track) => track.stop());
-        mediaStream = null;
       }
     }
 
@@ -465,58 +276,146 @@
       });
     }
 
+    function scheduleRecorderRestart() {
+      if (!voiceEnabled || pausedForSpeak || recording) {
+        return;
+      }
+      clearRecorderRestartTimer();
+      recorderRestartTimer = setTimeout(() => {
+        recorderRestartTimer = null;
+        if (voiceEnabled && !pausedForSpeak && !recording) {
+          startRecording();
+        }
+      }, 120);
+    }
+
+    function disableVoiceModeWithStatus(message) {
+      if (!voiceEnabled) {
+        return;
+      }
+      voiceEnabled = false;
+      saveVoiceModeState();
+      stopListening();
+      stopAudio();
+      updateLiveText("");
+      syncUiState();
+      if (message) {
+        setStatus(message);
+      }
+    }
+
     async function handleRecordingStop() {
       recording = false;
       syncUiState();
+      const recordingMs = Date.now() - Number(recordStartedAt || Date.now());
 
       if (!recordedChunks.length) {
         cleanupRecorder();
+        scheduleRecorderRestart();
         return;
       }
 
       const blob = new Blob(recordedChunks, {
         type: mediaRecorder && mediaRecorder.mimeType ? mediaRecorder.mimeType : "audio/webm"
       });
+
+      console.log("Audio size:", blob.size);
+
+      if (recordingMs < MIN_RECORD_MS) {
+        cleanupRecorder();
+        setStatus("Recording too short. Please speak for at least 3 seconds.");
+        updateLiveText("");
+        noSpeechAutoOffCount += 1;
+        if (noSpeechAutoOffCount >= VOICE_AUTO_OFF_AFTER_SILENT_TURNS) {
+          disableVoiceModeWithStatus("Voice mode auto-disabled after 5 seconds of silence.");
+          return;
+        }
+        scheduleRecorderRestart();
+        return;
+      }
+
+      if (blob.size < MIN_AUDIO_BYTES) {
+        cleanupRecorder();
+        setStatus("Audio too small. Please speak louder or check microphone.");
+        updateLiveText("");
+        noSpeechAutoOffCount += 1;
+        if (noSpeechAutoOffCount >= VOICE_AUTO_OFF_AFTER_SILENT_TURNS) {
+          disableVoiceModeWithStatus("Voice mode auto-disabled after 5 seconds of silence.");
+          return;
+        }
+        scheduleRecorderRestart();
+        return;
+      }
+
       cleanupRecorder();
 
       if (!assistantAPI || typeof assistantAPI.transcribeSpeech !== "function") {
         setStatus("Speech-to-text is unavailable.");
+        scheduleRecorderRestart();
         return;
       }
 
       try {
-        setStatus("Transcribing voice...");
+        // Auto-disable voice mode as soon as processing starts.
+        disableVoiceModeWithStatus();
+        updateLiveText("Processing...");
+        setStatus("Processing voice...");
+
         const audioBase64 = await blobToBase64(blob);
         const result = await assistantAPI.transcribeSpeech({
           audioBase64,
-          mimeType: blob.type || "audio/webm"
+          mimeType: blob.type || "audio/webm",
+          filename: "voice.webm",
+          languageCode: getPreferredSttLanguage()
         });
 
-        const text =
-          String(result && result.text ? result.text : "").trim() ||
-          (Array.isArray(result && result.transcripts)
-            ? result.transcripts.map((item) => String(item.text || "").trim()).join(" ").trim()
-            : "");
-
-        if (!text) {
-          setStatus("No speech detected in the recording.");
+        const transcript = normalizeTranscript(result && result.text ? result.text : "");
+        console.log("[voice][renderer] transcript:", transcript);
+        if (!transcript || transcript.length < 2) {
+          setStatus("No speech detected.");
+          updateLiveText("");
+          noSpeechAutoOffCount += 1;
+          if (noSpeechAutoOffCount >= VOICE_AUTO_OFF_AFTER_SILENT_TURNS) {
+            disableVoiceModeWithStatus("Voice mode auto-disabled after 5 seconds of silence.");
+            return;
+          }
           return;
         }
 
-        setStatus(`Heard: ${text.slice(0, 80)}`);
-        sendTranscript(text);
-      } catch (_error) {
-        setStatus("Voice transcription failed.");
+        if (isLikelyGarbageTranscript(transcript)) {
+          setStatus("Unclear speech detected. Please repeat clearly.");
+          updateLiveText("");
+          noSpeechAutoOffCount += 1;
+          if (noSpeechAutoOffCount >= VOICE_AUTO_OFF_AFTER_SILENT_TURNS) {
+            disableVoiceModeWithStatus("Voice mode auto-disabled after unclear input.");
+            return;
+          }
+          return;
+        }
+
+        noSpeechAutoOffCount = 0;
+        const appended = appendTranscriptToInput(transcript);
+        if (!appended && refs.promptInput && transcript) {
+          // Final guard: force populate input when dedupe logic blocks a valid transcript.
+          updatePromptInput(transcript);
+        }
+        setStatus(`Heard: ${transcript.slice(0, 80)}`);
+      } catch (error) {
+        const message = String(error && error.message ? error.message : "Voice transcription failed.");
+        setStatus(message);
+      } finally {
+        updateLiveText("");
+        scheduleRecorderRestart();
       }
     }
 
     async function startRecording() {
-      if (!supportsRecorder || recording || pausedForSpeak) {
+      if (!voiceEnabled || !supportsRecorder || recording || pausedForSpeak) {
         return;
       }
 
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        await ensureMediaStream();
       } catch (_error) {
         setStatus("Microphone access blocked. Allow mic permission and try again.");
         return;
@@ -525,7 +424,8 @@
       recordedChunks = [];
       const preferredType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
-        : "";
+        : "audio/webm";
+
       mediaRecorder = new MediaRecorder(mediaStream, preferredType ? { mimeType: preferredType } : undefined);
 
       mediaRecorder.ondataavailable = (event) => {
@@ -541,12 +441,17 @@
       mediaRecorder.onerror = () => {
         setStatus("Recording failed.");
         cleanupRecorder();
+        recording = false;
+        syncUiState();
+        scheduleRecorderRestart();
       };
 
       recording = true;
       syncUiState();
-      setStatus("Recording...");
-      mediaRecorder.start();
+      setStatus("Listening...");
+      updateLiveText("Listening...");
+      mediaRecorder.start(300);
+
       clearRecordTimer();
       recordStopTimer = setTimeout(() => {
         stopRecording();
@@ -618,8 +523,29 @@
       }
     }
 
+    function stopListening() {
+      clearRecorderRestartTimer();
+      stopRecording();
+      releaseMediaStream();
+    }
+
+    function stopAudio() {
+      try {
+        const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+        if (synth) {
+          synth.cancel();
+        }
+      } catch (_error) {}
+
+      if (activeAudio) {
+        activeAudio.pause();
+        activeAudio.src = "";
+        activeAudio = null;
+      }
+    }
+
     async function speak(text) {
-      if (!voiceEnabled || !assistantAPI || typeof assistantAPI.synthesizeSpeech !== "function") {
+      if (!voiceEnabled) {
         return;
       }
 
@@ -633,47 +559,34 @@
       stopAudio();
 
       try {
-        const result = await assistantAPI.synthesizeSpeech({ text: trimmed });
-        if (!result || !result.audioBase64) {
+        const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+        const UtteranceCtor = typeof window !== "undefined" ? window.SpeechSynthesisUtterance : null;
+        if (!synth || !UtteranceCtor) {
           pausedForSpeak = false;
-          scheduleRestart();
+          scheduleRecorderRestart();
           return;
         }
 
-        const mime = String(result.contentType || "audio/mpeg");
-        activeAudio = new Audio(`data:${mime};base64,${result.audioBase64}`);
-        activeAudio.volume = 1;
-        activeAudio.play().catch(() => {});
-        activeAudio.onended = () => {
+        const utterance = new UtteranceCtor(trimmed);
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+
+        utterance.onend = () => {
           pausedForSpeak = false;
-          if (voiceEnabled) {
-            if (recorderMode) {
-              startRecording();
-            } else {
-              scheduleRestart();
-            }
-          }
+          scheduleRecorderRestart();
         };
-        activeAudio.onerror = () => {
+        utterance.onerror = () => {
           pausedForSpeak = false;
-          if (voiceEnabled) {
-            if (recorderMode) {
-              startRecording();
-            } else {
-              scheduleRestart();
-            }
-          }
+          scheduleRecorderRestart();
         };
+
+        synth.cancel();
+        synth.speak(utterance);
       } catch (_error) {
         pausedForSpeak = false;
         setStatus("Voice playback failed.");
-        if (voiceEnabled) {
-          if (recorderMode) {
-            startRecording();
-          } else {
-            scheduleRestart();
-          }
-        }
+        scheduleRecorderRestart();
       }
     }
 
@@ -681,7 +594,6 @@
       if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
         return false;
       }
-
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach((track) => track.stop());
@@ -691,10 +603,36 @@
       }
     }
 
+    function shouldDisableForKey(event) {
+      const key = String((event && event.key) || "");
+      if (!key) {
+        return false;
+      }
+      if (event && (event.ctrlKey || event.metaKey || event.altKey)) {
+        return false;
+      }
+      if (key.length === 1) {
+        return true;
+      }
+      return key === "Backspace" || key === "Delete" || key === "Enter";
+    }
+
+    function handlePromptTyping(event) {
+      if (!voiceEnabled) {
+        return;
+      }
+      if (!shouldDisableForKey(event)) {
+        return;
+      }
+      disableVoiceModeWithStatus("Voice mode auto-disabled while typing.");
+    }
+
     async function toggleVoiceMode() {
       voiceEnabled = !voiceEnabled;
       saveVoiceModeState();
+
       if (voiceEnabled) {
+        noSpeechAutoOffCount = 0;
         const micOk = await requestMicrophoneAccess();
         if (!micOk) {
           voiceEnabled = false;
@@ -703,27 +641,38 @@
           setStatus("Microphone access blocked. Allow mic permission and try again.");
           return;
         }
-        if (!SpeechRecognition || recorderMode) {
-          recorderMode = true;
-          setStatus("Recorder mode enabled. Click Voice to stop.");
-          startRecording();
-        } else {
-          startListening();
-          setStatus("Voice mode enabled.");
-        }
+
+        setStatus("Voice mode enabled.");
+        startRecording();
       } else {
-        stopListening({ disable: true });
-        stopRecording();
+        stopListening();
         stopAudio();
+        updateLiveText("");
         setStatus("Voice mode disabled.");
       }
+
       syncUiState();
     }
 
-    function init() {
-      if (!SpeechRecognition && supportsRecorder) {
-        recorderMode = true;
+    function bindVoiceControls() {
+      if (refs.voiceToggle) {
+        refs.voiceToggle.addEventListener("change", () => {
+          const shouldEnable = Boolean(refs.voiceToggle.checked);
+          if (shouldEnable !== voiceEnabled) {
+            toggleVoiceMode();
+          } else {
+            syncUiState();
+          }
+        });
       }
+
+      if (refs.promptInput) {
+        refs.promptInput.addEventListener("keydown", handlePromptTyping, true);
+      }
+    }
+
+    function init() {
+      bindVoiceControls();
 
       voiceEnabled = Boolean(loadVoiceModeState());
       if (!voiceEnabled) {
@@ -739,12 +688,7 @@
           setStatus("Microphone access blocked. Allow mic permission and restart.");
           return;
         }
-
-        if (recorderMode) {
-          startRecording();
-        } else {
-          startListening();
-        }
+        startRecording();
       });
 
       syncUiState();

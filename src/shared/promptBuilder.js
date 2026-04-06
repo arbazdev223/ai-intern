@@ -11,24 +11,19 @@
   root.SharedModules = root.SharedModules || {};
   root.SharedModules.promptBuilder = promptBuilder;
 })(typeof globalThis !== "undefined" ? globalThis : this, function (constants) {
-  const MASTER_SYSTEM_PROMPT = `You are an expert-level AI assistant.
+  const MASTER_SYSTEM_PROMPT = `You are a smart conversational AI assistant.
 
 You MUST follow these rules strictly:
 
-1. Always provide detailed and complete answers
-2. Always structure responses using:
-   - Headings
-   - Subheadings
-   - Bullet points
-   - Clear sections
-3. Never give short or vague answers
-4. Expand explanations where useful
-5. Be precise, professional, and easy to understand
-6. If the task involves formatting or research, strictly follow the provided instructions
-7. Do not skip any part of the user request
-
-IMPORTANT:
-Your response quality must feel like a professional report, not a casual reply.`;
+1. Reply in a simple, natural, human conversational tone.
+2. Avoid report style and heavy formatting unless the user explicitly asks for it.
+3. Do not hallucinate facts, news, dates, or events.
+4. If uncertain, say: "I may be wrong, but based on general knowledge..." and then give a cautious answer.
+5. Understand user intent first; answer directly and do not add unrelated assumptions.
+6. Keep formatting clean: no unnecessary headings, no markdown spam, no rigid templates.
+7. Adapt language to the user (Hindi, Hinglish, or English) and do not mix languages unless user does.
+8. Give realistic examples only; never invent fake breaking news or fake sources.
+9. Keep responses concise but complete (usually 3-6 short paragraphs or bullets when helpful).`;
 
   function sanitizeContextMessages(contextMessages, maxMessages = 5, maxMessageChars = 500) {
     if (!Array.isArray(contextMessages)) {
@@ -213,6 +208,47 @@ Your response quality must feel like a professional report, not a casual reply.`
     return greetingPatterns.some((pattern) => pattern.test(text));
   }
 
+  function detectLanguage(text) {
+    const source = String(text || "").trim();
+    if (/[\u0900-\u097F]/.test(source)) return "hindi";
+    const ratioHindiWords = (source.match(/(kya|hai|kar|tum|mujhe|kaise|bata)/gi) || []).length;
+    if (ratioHindiWords >= 1) return "hinglish";
+    return "english";
+  }
+
+  function normalize(text) {
+    return String(text || "").toLowerCase().trim();
+  }
+
+  function getSignals(text) {
+    const t = normalize(text);
+    const words = t ? t.split(/\s+/).filter(Boolean) : [];
+    return {
+      wordCount: words.length,
+      hasQuestion: /\?/.test(t),
+      hasVerb: /\b(kar|kya|kaise|bata|help|explain|tell|guide|discuss)\b/i.test(t),
+      isShort: t.length <= 12,
+      isSingleWord: words.length === 1,
+      isGreetingPattern: /^(hi+|hello+|hey+|hlo+|yo+)$/.test(t)
+    };
+  }
+
+  function classifyConversationIntent(text) {
+    const s = getSignals(text);
+    if (s.isGreetingPattern || (s.isSingleWord && s.isShort)) {
+      return "greeting";
+    }
+    if (s.hasVerb || s.wordCount >= 3 || s.hasQuestion) {
+      return "meaningful";
+    }
+    return "casual";
+  }
+
+  function isCasualInput(text) {
+    const intent = classifyConversationIntent(text);
+    return intent === "casual" || intent === "greeting";
+  }
+
   function isTechnicalRequest(userPrompt) {
     const text = String(userPrompt || "").toLowerCase();
     if (!text) {
@@ -390,6 +426,9 @@ Your response quality must feel like a professional report, not a casual reply.`
     const vagueProblemQuery = isVagueProblemQuery(questionText);
     const hasSpecificInput = hasConcreteInput(questionText);
     const isGreeting = isGreetingQuery(questionText);
+    const conversationIntent = classifyConversationIntent(questionText);
+    const casualInput = isCasualInput(questionText);
+    const detectedLanguage = detectLanguage(questionText);
     const isTechnical = isTechnicalRequest(questionText);
     const isDirectCode = isDirectCodeRequest(questionText);
     const isTrendListQuery = isTrendOrListQuery(questionText);
@@ -409,6 +448,9 @@ Your response quality must feel like a professional report, not a casual reply.`
       "Never claim confusion just because the detected app and question topic are different.",
       "If older conversation context is unrelated, ignore it and focus on the latest question.",
       "Reply in the same language style as the student (Hindi, English, or Hinglish) unless asked otherwise.",
+      "Do not mix languages in one response unless the student does.",
+      "Never restart conversation with a greeting if the user already shared a meaningful message.",
+      "If user provides personal info or a statement, respond to that meaning first instead of asking generic 'how can I help'.",
       "Respond in valid GitHub-flavored Markdown only.",
       "Use headings only when they genuinely improve clarity. If you use headings, use ### Heading.",
       "Use bullet lists with '-' only. Never use '*' bullets.",
@@ -426,6 +468,9 @@ Your response quality must feel like a professional report, not a casual reply.`
       "[RESPONSE STYLE SWITCHING]",
       "Choose the response style based on the user's input type.",
       "If greeting: be casual, short, and friendly. Ask how you can help.",
+      "IMPORTANT RULE: If input is casual, do NOT use headings, keep response under 2 lines, and keep conversational tone.",
+      `Language mode: ${detectedLanguage}. Match this language consistently.`,
+      `Conversation intent: ${conversationIntent}. Continue naturally based on this intent.`,
       "If problem statement: give direct fix first, then brief explanation, then optional question.",
       "If technical request: be detailed and step-by-step, use the exact input provided.",
       "Do not force a rigid Answer/Explanation format for every response."
@@ -486,12 +531,24 @@ Your response quality must feel like a professional report, not a casual reply.`
       );
     }
 
-    if (isGreeting) {
+    if (isGreeting || casualInput) {
       blocks.push(
         "",
         "[CASUAL MODE]",
         "Respond casually and briefly.",
-        "Example: Hi, main theek hoon. Aap batao kis cheez me help chahiye?"
+        "Do not use headings.",
+        "Keep response under 2 lines.",
+        "Match user language exactly."
+      );
+    }
+
+    if (conversationIntent === "meaningful") {
+      blocks.push(
+        "",
+        "[MEANINGFUL MODE]",
+        "Answer naturally and continue conversation based on user meaning.",
+        "Do not restart with greeting.",
+        "Ask follow-up only if truly needed."
       );
     }
 
@@ -643,6 +700,9 @@ Your response quality must feel like a professional report, not a casual reply.`
     }
 
     const userInput = String(options.userInput || "").trim();
+    const detectedLanguage = detectLanguage(userInput);
+    const conversationIntent = classifyConversationIntent(userInput);
+    const casualInput = isCasualInput(userInput);
     const context = options.context && typeof options.context === "object" ? options.context : {};
     const specializedPrompt = String(options.systemPrompt || "").trim();
     const isExplanationMode = /you are an expert explainer ai\./i.test(specializedPrompt);
@@ -707,8 +767,32 @@ Your response quality must feel like a professional report, not a casual reply.`
     }
 
     blocks.push("", "[USER INPUT]", userInput || "(empty)");
+    blocks.push(
+      "",
+      "LANGUAGE RULE (MANDATORY):",
+      `- User language detected: ${detectedLanguage}`,
+      "- Respond in the same language as the user input.",
+      "- Do not mix languages."
+    );
+    blocks.push(
+      "",
+      "CONVERSATION RULES (MANDATORY):",
+      `- User intent detected: ${conversationIntent}`,
+      "- NEVER restart conversation with greeting.",
+      "- If user shared personal info/statement, respond to that meaning first.",
+      "- Never ignore user intent."
+    );
 
-    if (isExplanationMode) {
+    if (casualInput) {
+      blocks.push(
+        "",
+        "FINAL OUTPUT RULES (MANDATORY):",
+        "- Casual input detected",
+        "- Do not use headings",
+        "- Keep response under 2 lines",
+        "- Keep tone conversational and human"
+      );
+    } else if (isExplanationMode) {
       blocks.push(
         "",
         "FINAL OUTPUT RULES (MANDATORY):",
@@ -723,11 +807,14 @@ Your response quality must feel like a professional report, not a casual reply.`
       blocks.push(
         "",
         "FINAL OUTPUT RULES (MANDATORY):",
-        "- Response MUST be well-structured",
-        "- Use headings and bullet points",
-        "- Avoid one-line answers",
+        "- Keep response conversational and direct",
+        "- Start with simple answer, then example, then optional extra detail",
+        "- Avoid headings unless the user asks or they are truly necessary",
+        "- Avoid markdown-heavy formatting and template-style sections",
+        "- Use bullets only when truly needed for clarity",
+        "- Do not use emojis unless they genuinely help",
         "- Ensure completeness and clarity",
-        "- Format like a professional document"
+        "- Avoid over-formatting"
       );
     }
 

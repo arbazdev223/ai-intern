@@ -156,22 +156,57 @@ function createIntentService(modelService) {
     return /^(hi+|hey+|hello+)$/.test(text);
   }
 
+  function normalize(text) {
+    return String(text || "").toLowerCase().trim();
+  }
+
+  function getSignals(text) {
+    const t = normalize(text);
+    const words = t ? t.split(/\s+/).filter(Boolean) : [];
+
+    return {
+      wordCount: words.length,
+      hasQuestion: /\?/.test(t),
+      hasVerb: /\b(kar|kya|kaise|bata|help|explain|tell|guide|discuss)\b/i.test(t),
+      isShort: t.length <= 12,
+      isSingleWord: words.length === 1,
+      isGreetingPattern: /^(hi+|hello+|hey+|hlo+|yo+)$/.test(t)
+    };
+  }
+
+  function classifyIntent(text) {
+    const s = getSignals(text);
+
+    if (s.isGreetingPattern || (s.isSingleWord && s.isShort)) {
+      return "greeting";
+    }
+
+    if (s.hasVerb || s.wordCount >= 3 || s.hasQuestion) {
+      return "meaningful";
+    }
+
+    return "casual";
+  }
+
+  function detectLanguage(text) {
+    const source = String(text || "").trim();
+    if (/[\u0900-\u097F]/.test(source)) return "hindi";
+    const ratioHindiWords = (source.match(/(kya|hai|kar|tum|mujhe|kaise|bata)/gi) || []).length;
+    if (ratioHindiWords >= 1) return "hinglish";
+    return "english";
+  }
+
+  function isCasualInput(text) {
+    const intent = classifyIntent(text);
+    return intent === "casual" || intent === "greeting";
+  }
+
   function detectTone(input) {
-    const text = String(input || "").toLowerCase().trim();
-    const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
-    const hasQuestion = text.includes("?");
-    const casualWords = ["hi", "hello", "hey", "bro", "bhai"];
-    const casualSignal = casualWords.some((word) => text.includes(word));
-    const shortSentence = wordCount <= 8;
-    const taskSignal =
-      /\b(explain|search|latest|news|today|research|analyze|architecture|code|debug|compare|generate|create|build|batao|kya|kaise|kyu)\b/i.test(text);
+    const text = normalize(input);
+    const intent = classifyIntent(text);
 
     if (isExplanationRequest(text)) return "formal";
-    if (isGreeting(text)) return "casual";
-    if (taskSignal) return "formal";
-
-    if (casualSignal && shortSentence) return "casual";
-    if (shortSentence && !hasQuestion) return "casual";
+    if (intent === "greeting" || intent === "casual") return "casual";
     return "formal";
   }
 
@@ -217,7 +252,7 @@ function createIntentService(modelService) {
     return "";
   }
 
-  async function classifyIntent(userPrompt, optionsArg = {}) {
+  async function classifyTaskIntent(userPrompt, optionsArg = {}) {
     if (isHybridRequest(userPrompt)) {
       return {
         intent: "hybrid",
@@ -261,7 +296,7 @@ function createIntentService(modelService) {
   }
 
   async function analyzeUserIntent(userPrompt) {
-    const unified = await classifyIntent(userPrompt);
+    const unified = await classifyTaskIntent(userPrompt);
     const intent = unified.intent === "document_formatting" ? "generate_file" : unified.intent === "other" ? "other" : "explain";
     return {
       intent,
@@ -304,7 +339,7 @@ function createIntentService(modelService) {
   }
 
   async function classifyInputType(userPrompt) {
-    const unified = await classifyIntent(userPrompt);
+    const unified = await classifyTaskIntent(userPrompt);
     let type = "teaching";
     if (unified.intent === "document_formatting") {
       type = "file_generation";
@@ -331,8 +366,14 @@ function createIntentService(modelService) {
 
   return {
     detectResponseMode,
+    normalize,
+    getSignals,
+    classifyIntent,
+    classifyTaskIntent,
     detectTone,
+    detectLanguage,
     getTone,
+    isCasualInput,
     isGreeting,
     isInformalLanguage,
     isImagePrompt,

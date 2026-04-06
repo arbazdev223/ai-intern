@@ -136,10 +136,8 @@ describe("aiClient", () => {
 
     expect(localSearchService.search).toHaveBeenCalled();
     expect(result.provider).toBe("tool:webSearch");
-    expect(/### Abhi Kya Chal Raha Hai|reliable live headlines clear nahi mili/i.test(result.response)).toBe(true);
-    if (result.response.includes("### Sources")) {
-      expect(result.response).toContain("Reuters");
-    }
+    expect(/Based on general understanding|Based on recent reports|reliable live headlines clear nahi mili/i.test(result.response)).toBe(true);
+    expect(result.response).not.toContain("### ");
   });
 
   test("web search response does not leak external content markers", async () => {
@@ -166,7 +164,8 @@ describe("aiClient", () => {
 
     expect(result.response).not.toContain("[BEGIN EXTERNAL CONTENT]");
     expect(result.response).not.toContain("[END EXTERNAL CONTENT]");
-    expect(/### Abhi Kya Chal Raha Hai|Abhi reliable live headlines clear nahi mili/i.test(result.response)).toBe(true);
+    expect(/Based on general understanding|Based on recent reports|Abhi reliable live headlines clear nahi mili/i.test(result.response)).toBe(true);
+    expect(result.response).not.toContain("### ");
     expect(result.response).not.toContain("[BEGIN EXTERNAL CONTENT]");
   });
 
@@ -202,8 +201,8 @@ describe("aiClient", () => {
     });
 
     expect(result.provider).toBe("tool:webSearch");
-    expect(/### Abhi Kya Chal Raha Hai|reliable live headlines clear nahi mili/i.test(result.response)).toBe(true);
-    if (result.response.includes("### Abhi Kya Chal Raha Hai")) {
+    expect(/Based on recent reports|reliable live headlines clear nahi mili/i.test(result.response)).toBe(true);
+    if (result.response.includes("Based on recent reports")) {
       expect(result.response).toContain("Global markets react to fresh policy signals");
     }
   });
