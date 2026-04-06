@@ -1,6 +1,6 @@
 {
   "name": "ifda-ai",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "IFDA",
   "description": "Electron desktop chat app using OpenAI and Gemini APIs",
   "main": "main.js",
