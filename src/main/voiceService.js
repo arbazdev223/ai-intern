@@ -302,6 +302,56 @@ function createVoiceService() {
     };
   }
 
+  async function transcribeWhisperTranslationAttempt({
+    apiKey,
+    buffer,
+    mimeType,
+    filename,
+    model
+  }) {
+    let FormDataCtor = typeof FormData !== "undefined" ? FormData : null;
+    if (!FormDataCtor) {
+      try {
+        FormDataCtor = require("undici").FormData;
+      } catch (_error) {
+        FormDataCtor = null;
+      }
+    }
+    if (!FormDataCtor) {
+      throw new Error("FormData is not available in this runtime.");
+    }
+
+    const form = new FormDataCtor();
+    form.append("model", String(model || "whisper-1"));
+    form.append("file", new Blob([buffer], { type: mimeType }), filename);
+    form.append("temperature", "0");
+
+    const response = await fetchWithRetry(
+      `${openAiBaseUrl}/v1/audio/translations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: form
+      },
+      { label: "openai-whisper-translation", timeoutMs: 45000 }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      const suffix = errorText ? `: ${errorText.slice(0, 240)}` : "";
+      throw new Error(`OpenAI Whisper translation failed (${response.status})${suffix}`);
+    }
+
+    const data = await response.json().catch(() => ({}));
+    return {
+      text: normalizeTranscript(data && data.text ? data.text : ""),
+      raw: data,
+      language: "en"
+    };
+  }
+
   function getVoiceId() {
     return String(process.env.ELEVENLABS_VOICE_ID || "").trim();
   }
@@ -374,6 +424,58 @@ function createVoiceService() {
     };
   }
 
+  function normalizeSttMimeType(value) {
+    const normalized = String(value || "audio/webm").split(";")[0].trim().toLowerCase();
+    const allowed = new Set([
+      "audio/webm",
+      "audio/wav",
+      "audio/x-wav",
+      "audio/mpeg",
+      "audio/mp3",
+      "audio/mp4",
+      "audio/m4a",
+      "audio/ogg"
+    ]);
+    if (allowed.has(normalized)) {
+      return normalized;
+    }
+    return "audio/webm";
+  }
+
+  function ensureSttFilename(filenameValue, mimeType) {
+    const safeName = String(filenameValue || "").trim();
+    const fallbackByMime = {
+      "audio/webm": "speech.webm",
+      "audio/wav": "speech.wav",
+      "audio/x-wav": "speech.wav",
+      "audio/mpeg": "speech.mp3",
+      "audio/mp3": "speech.mp3",
+      "audio/mp4": "speech.m4a",
+      "audio/m4a": "speech.m4a",
+      "audio/ogg": "speech.ogg"
+    };
+
+    if (!safeName) {
+      return fallbackByMime[mimeType] || "speech.webm";
+    }
+
+    const lower = safeName.toLowerCase();
+    const expectedExt = String((fallbackByMime[mimeType] || "speech.webm").split(".").pop() || "webm");
+    if (lower.endsWith(`.${expectedExt}`)) {
+      return safeName;
+    }
+
+    return `${safeName.replace(/\.[a-z0-9]+$/i, "")}.${expectedExt}`;
+  }
+
+  function normalizeOutputMode(value) {
+    const mode = String(value || "auto").trim().toLowerCase();
+    if (mode === "hindi" || mode === "english") {
+      return mode;
+    }
+    return "auto";
+  }
+
   async function transcribeSpeech(payload = {}) {
     const apiKey = getOpenAiApiKey();
 
@@ -386,10 +488,14 @@ function createVoiceService() {
       throw new Error("OpenAI API key is not configured.");
     }
 
-    const mimeType = String(payload.mimeType || "audio/webm").trim() || "audio/webm";
-    const filename = String(payload.filename || "audio.webm").trim() || "audio.webm";
+    const mimeType = normalizeSttMimeType(payload.mimeType || "audio/webm");
+    const filename = ensureSttFilename(payload.filename || "speech.webm", mimeType);
+    const outputMode = normalizeOutputMode(payload.outputMode);
     const buffer = Buffer.from(audioBase64, "base64");
-    const configuredLanguage = String(process.env.WHISPER_LANGUAGE || "").trim();
+    if (!buffer || buffer.length === 0) {
+      throw new Error("Empty audio file.");
+    }
+    console.log("STT FILE:", filename, mimeType, buffer.length);
     const preferLocalStt = String(process.env.PREFER_LOCAL_STT || "false").trim().toLowerCase() === "true";
 
     if (saveDebugAudio) {
@@ -406,7 +512,37 @@ function createVoiceService() {
       }
     }
 
-    const languageCode = String(payload.languageCode || configuredLanguage).trim();
+    const requestedLanguageCode = String(payload.languageCode || "").trim();
+    const languageCode =
+      outputMode === "hindi"
+        ? "hi"
+        : outputMode === "english"
+          ? "en"
+          : requestedLanguageCode;
+
+    if (outputMode === "english") {
+      try {
+        const translated = await transcribeWhisperTranslationAttempt({
+          apiKey,
+          buffer,
+          mimeType,
+          filename,
+          model: "whisper-1"
+        });
+        if (translated && translated.text && !isMeaninglessTranscript(translated.text)) {
+          return {
+            text: translated.text,
+            provider: "openai-whisper-translation",
+            language: "en"
+          };
+        }
+      } catch (error) {
+        console.warn(
+          "[voice][debug] Whisper translation mode failed:",
+          error && error.message ? error.message : error
+        );
+      }
+    }
 
     if (preferLocalStt) {
       try {

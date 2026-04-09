@@ -4,6 +4,7 @@
   function createAttachmentsManager(options = {}) {
     const refs = options.refs;
     let pendingScreenshotBase64 = "";
+    let pendingAttachmentSource = "";
     let lastPasteHandledAt = 0;
     let clipboardReadInProgress = false;
 
@@ -50,6 +51,7 @@
     function clearPendingAttachment(optionsArg = {}) {
       const silent = Boolean(optionsArg.silent);
       pendingScreenshotBase64 = "";
+      pendingAttachmentSource = "";
       updateAttachmentStatus();
       updateAttachmentPreview();
       if (!silent) {
@@ -101,6 +103,7 @@
       try {
         options.setStatus("Capturing screenshot...", { busy: true });
         pendingScreenshotBase64 = await captureScreenshot();
+        pendingAttachmentSource = "capture";
         showPendingAttachmentPreview("capture");
         options.setStatus("Screenshot captured and attached.");
         return pendingScreenshotBase64;
@@ -125,6 +128,7 @@
         }
 
         pendingScreenshotBase64 = base64;
+        pendingAttachmentSource = "clipboard";
         lastPasteHandledAt = Date.now();
         showPendingAttachmentPreview("clipboard");
         options.setStatus("Image pasted from clipboard.");
@@ -166,6 +170,48 @@
         });
     }
 
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Unable to read selected file."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function handleFileInputChange(event) {
+      const input = event && event.target;
+      const file = input && input.files && input.files[0] ? input.files[0] : null;
+      if (!file) {
+        return;
+      }
+
+      try {
+        if (!String(file.type || "").toLowerCase().startsWith("image/")) {
+          options.setStatus("Only image files are supported right now.");
+          return;
+        }
+
+        const dataUrl = await readFileAsDataUrl(file);
+        const match = dataUrl.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
+        if (!match || !match[1]) {
+          throw new Error("Invalid image file.");
+        }
+
+        pendingScreenshotBase64 = String(match[1] || "").trim();
+        pendingAttachmentSource = "file";
+        showPendingAttachmentPreview(file.name || "file");
+        options.setStatus("File attached.");
+      } catch (error) {
+        console.error("File attach failed:", error);
+        options.setStatus("Could not attach file.");
+      } finally {
+        if (input) {
+          input.value = "";
+        }
+      }
+    }
+
     function init() {
       if (refs.clearAttachmentButton) {
         refs.clearAttachmentButton.addEventListener("click", () => {
@@ -179,6 +225,10 @@
         refs.promptInput.addEventListener("keydown", handlePromptKeydown);
       }
 
+      if (refs.fileAttachInput) {
+        refs.fileAttachInput.addEventListener("change", handleFileInputChange);
+      }
+
       document.addEventListener("paste", handlePasteEvent);
       document.addEventListener("keydown", handleGlobalPasteKeydown);
       updateAttachmentStatus();
@@ -189,6 +239,7 @@
       attachScreenshotFromClipboard,
       captureScreenshot,
       clearPendingAttachment,
+      getPendingAttachmentSource: () => pendingAttachmentSource,
       getPendingScreenshotBase64: () => pendingScreenshotBase64,
       handleManualScreenshotAttach,
       init,

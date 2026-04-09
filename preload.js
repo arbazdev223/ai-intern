@@ -34,6 +34,42 @@ function writeClipboardTextSafe(text) {
   return ipcRenderer.invoke("assistant:write-clipboard-text", { text: safeText });
 }
 
+async function toSpeechPayload(input) {
+  const payload = input && typeof input === "object" ? input : {};
+  const hasBlob = typeof Blob !== "undefined";
+  const fileLike = hasBlob
+    ? (payload && payload.file instanceof Blob ? payload.file : input instanceof Blob ? input : null)
+    : null;
+
+  if (fileLike) {
+    const mimeType = String(fileLike.type || "audio/webm").split(";")[0].trim() || "audio/webm";
+    const filename =
+      typeof fileLike.name === "string" && fileLike.name.trim()
+        ? fileLike.name.trim()
+        : mimeType.includes("wav")
+          ? "speech.wav"
+          : mimeType.includes("mp3")
+            ? "speech.mp3"
+            : "speech.webm";
+    const arrayBuffer = await fileLike.arrayBuffer();
+    return {
+      audioBase64: Buffer.from(arrayBuffer).toString("base64"),
+      mimeType,
+      filename,
+      languageCode: typeof payload.languageCode === "string" ? payload.languageCode : "",
+      outputMode: typeof payload.outputMode === "string" ? payload.outputMode : "auto"
+    };
+  }
+
+  return {
+    audioBase64: String(payload.audioBase64 || ""),
+    mimeType: String(payload.mimeType || "audio/webm").split(";")[0].trim() || "audio/webm",
+    filename: String(payload.filename || "speech.webm").trim() || "speech.webm",
+    languageCode: typeof payload.languageCode === "string" ? payload.languageCode : "",
+    outputMode: typeof payload.outputMode === "string" ? payload.outputMode : "auto"
+  };
+}
+
 contextBridge.exposeInMainWorld("assistantAPI", {
   captureScreenshot: () => ipcRenderer.invoke("capture-screen"),
   extractOcrText: (base64Screenshot) =>
@@ -93,7 +129,7 @@ contextBridge.exposeInMainWorld("assistantAPI", {
     return image.toPNG().toString("base64");
   },
   synthesizeSpeech: (payload) => ipcRenderer.invoke("assistant:tts", payload),
-  transcribeSpeech: (payload) => ipcRenderer.invoke("assistant:stt", payload),
+  transcribeSpeech: async (payload) => ipcRenderer.invoke("assistant:stt", await toSpeechPayload(payload)),
   sendPrompt: (payload) => ipcRenderer.invoke("ai:generate", payload),
   moveFloatingButton: (payload) => ipcRenderer.invoke("assistant:move-floating-button", payload),
   classifyInputType: (payload) => ipcRenderer.invoke("assistant:classify-input", payload),

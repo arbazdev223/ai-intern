@@ -1746,11 +1746,21 @@
       hideEmptyState();
 
       if (optionsArg.imagePath) {
+        bubble.classList.add("chat-bubble--with-image");
+        const imageWrap = document.createElement("div");
+        imageWrap.className = "chat-image-block user-image-block image-ready";
+
+        const frame = document.createElement("div");
+        frame.className = "image-frame";
+
         const img = document.createElement("img");
         img.className = "chat-image message-image";
         img.alt = "Screenshot preview";
         img.src = optionsArg.imagePath;
-        bubble.appendChild(img);
+
+        frame.appendChild(img);
+        imageWrap.appendChild(frame);
+        bubble.appendChild(imageWrap);
       }
 
       if (meta) {

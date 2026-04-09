@@ -88,8 +88,16 @@ function validateSttPayload(payload) {
     ensureStringField(payload, "modelId", 128);
   }
 
+  if (payload.filename) {
+    ensureStringField(payload, "filename", 256);
+  }
+
   if (payload.languageCode) {
     ensureStringField(payload, "languageCode", 32);
+  }
+
+  if (payload.outputMode) {
+    ensureStringField(payload, "outputMode", 32);
   }
 }
 

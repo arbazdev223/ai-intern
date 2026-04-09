@@ -1,5 +1,6 @@
 const OpenAI = require("openai");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { getEnv } = require("../config/env");
 
 function isLikelyOpenAIKey(value) {
   const trimmed = String(value || "").trim();
@@ -7,9 +8,8 @@ function isLikelyOpenAIKey(value) {
 }
 
 function getOpenAIKey() {
-  const primaryKey = String(process.env.OPENAI_API_KEY || "").trim();
-  const legacyKey = String(process.env.GPT_key || "").trim();
-  const envKey = primaryKey || legacyKey;
+  const env = getEnv();
+  const envKey = String(env.OPENAI_API_KEY || "").trim();
   if (!envKey || !isLikelyOpenAIKey(envKey)) {
     return "";
   }
@@ -17,15 +17,18 @@ function getOpenAIKey() {
 }
 
 function getGeminiKey() {
-  return String(process.env.GEMINI_API_KEY || "").trim();
+  const env = getEnv();
+  return String(env.GEMINI_API_KEY || "").trim();
 }
 
 function getOpenAIModel() {
-  return String(process.env.GPT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
+  const env = getEnv();
+  return String(env.OPENAI_MODEL || "gpt-4o-mini").trim();
 }
 
 function getGeminiModel() {
-  return String(process.env.GEMINI_MODEL || "gemini-1.5-flash").trim();
+  const env = getEnv();
+  return String(env.GEMINI_MODEL || "gemini-1.5-flash").trim();
 }
 
 function createModelService() {

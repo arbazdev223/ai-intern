@@ -13,6 +13,7 @@ const { createFileService } = require("./services/fileService");
 const { createImageService } = require("./services/imageService");
 const LRUCache = require("./utils/lruCache");
 const { estimateTokens } = require("./utils/tokenUtils");
+const { getEnv, ensureAiProviderConfigured } = require("./config/env");
 
 function createAiClient(options = {}) {
   const acronymStopWords = new Set(constants.ACRONYM_STOP_WORDS || []);
@@ -40,7 +41,6 @@ Your job:
 - Use a single Markdown code block with the correct language tag when possible.
 - Keep formatting clean and minimal.
 `.trim();
-  let didWarnLegacyKey = false;
   let didWarnInvalidKey = false;
 
   function isLikelyOpenAIKey(value) {
@@ -53,9 +53,8 @@ Your job:
   }
 
   function getOpenAIKey() {
-    const primaryKey = String(process.env.OPENAI_API_KEY || "").trim();
-    const legacyKey = String(process.env.GPT_key || "").trim();
-    const envKey = primaryKey || legacyKey;
+    const env = getEnv();
+    const envKey = String(env.OPENAI_API_KEY || "").trim();
 
     if (!envKey) {
       return "";
@@ -70,12 +69,6 @@ Your job:
       return "";
     }
 
-    // Keep legacy compatibility but warn once.
-    if (!primaryKey && legacyKey && !didWarnLegacyKey) {
-      console.warn("GPT_key is deprecated. Please migrate to OPENAI_API_KEY.");
-      didWarnLegacyKey = true;
-    }
-
     return envKey;
   }
 
@@ -88,7 +81,8 @@ Your job:
   }
 
   function getGeminiKey() {
-    return String(process.env.GEMINI_API_KEY || "").trim();
+    const env = getEnv();
+    return String(env.GEMINI_API_KEY || "").trim();
   }
 
   function getGeminiModel() {
@@ -1343,6 +1337,11 @@ Your job:
 
   async function rewriteIfWeakResponse(originalText, optionsArg = {}) {
     const sourceText = String(originalText || "").trim();
+    const forceStructuredRewrite = Boolean(optionsArg && optionsArg.forceStructuredRewrite);
+    if (!forceStructuredRewrite) {
+      return sourceText;
+    }
+
     if (!isWeakResponse(sourceText)) {
       return sourceText;
     }
@@ -1426,7 +1425,7 @@ Your job:
     return outputTypes.length > 0 ? Array.from(new Set(outputTypes)) : ["html"];
   }
 
-  async function generateImageResponseFromPrompt(userPrompt, payload = {}) {
+  async function generateImageResponseFromPrompt(userPrompt, payload = {}, plannerPlan = null) {
     const openAIKey = getOpenAIKey();
     if (!openAIKey) {
       return {
@@ -1440,10 +1439,15 @@ Your job:
     }
 
     try {
-      const imageResult = await imageService.generateImage(userPrompt, {
+      const generatedPrompt =
+        typeof promptBuilder.buildImageGenerationPrompt === "function"
+          ? promptBuilder.buildImageGenerationPrompt({ userInput: userPrompt, plan: plannerPlan || {} })
+          : userPrompt;
+      const imageResult = await imageService.generateImage(generatedPrompt, {
         size: payload.imageSize,
         enhance: payload.imageEnhance,
-        count: payload.imageCount
+        count: payload.imageCount,
+        imageType: String(plannerPlan && plannerPlan.image_type ? plannerPlan.image_type : "auto").trim().toLowerCase()
       });
       const requestedCount = Number.isFinite(Number(payload.imageCount))
         ? Number(payload.imageCount)
@@ -1591,26 +1595,138 @@ Your job:
     }
 
     if (forceImageGeneration) {
-      return generateImageResponseFromPrompt(userPrompt, payload);
+      return generateImageResponseFromPrompt(userPrompt, payload, plannerPlan);
     }
 
-    const responseMode =
+    function mapPlanTaskToConversationIntent(taskValue, fallbackIntent) {
+      const task = String(taskValue || "").trim().toLowerCase();
+      if (task === "chat" && String(fallbackIntent || "").toLowerCase() === "greeting") {
+        return "greeting";
+      }
+      return "meaningful";
+    }
+
+    function mapPlanTaskToLegacyIntent(taskValue) {
+      const task = String(taskValue || "").trim().toLowerCase();
+      if (task === "code") {
+        return "coding";
+      }
+      if (task === "explain") {
+        return "explanation";
+      }
+      if (task === "image") {
+        return "image_generation";
+      }
+      if (task === "search") {
+        return "web_research";
+      }
+      return "general";
+    }
+
+    function getPreviousUserContext(currentInput, payloadArg) {
+      const current = String(currentInput || "").trim();
+      const messages = Array.isArray(payloadArg && payloadArg.contextMessages)
+        ? payloadArg.contextMessages
+        : Array.isArray(payloadArg && payloadArg.memoryMessages)
+          ? payloadArg.memoryMessages
+          : [];
+
+      for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+        const msg = messages[idx];
+        const role = String(msg && msg.role ? msg.role : "").trim().toLowerCase();
+        const content = String(msg && msg.content ? msg.content : "").trim();
+        if (!content || role !== "user") {
+          continue;
+        }
+        if (content === current) {
+          continue;
+        }
+        return content;
+      }
+
+      return "";
+    }
+
+    async function resolvePlannerPlan(inputText, contextText, timeoutMs) {
+      if (!intentService || typeof intentService.planUserIntent !== "function") {
+        return null;
+      }
+
+      const timeout = Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : 3000;
+      const plannerCall = intentService.planUserIntent({
+        input: inputText,
+        context: contextText
+      });
+      const timeoutPromise = new Promise((resolve) => {
+        setTimeout(() => resolve(null), Math.max(250, timeout));
+      });
+
+      try {
+        return await Promise.race([plannerCall, timeoutPromise]);
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    const plannerTimeoutMs = Number.isFinite(Number(process.env.PLANNER_TIMEOUT_MS))
+      ? Number(process.env.PLANNER_TIMEOUT_MS)
+      : 3000;
+    const plannerContext = getPreviousUserContext(userPrompt, payload);
+    let plannerPlan = !rawPrompt ? await resolvePlannerPlan(userPrompt, plannerContext, plannerTimeoutMs) : null;
+    if (!rawPrompt && !plannerPlan) {
+      plannerPlan = await resolvePlannerPlan(userPrompt, plannerContext, plannerTimeoutMs);
+    }
+    console.log("PLAN:", plannerPlan || { fallback: true });
+
+    const legacyResponseMode =
       intentService && typeof intentService.detectResponseMode === "function"
         ? intentService.detectResponseMode(userPrompt)
         : "detailed";
-    const conversationIntent =
+    const legacyConversationIntent =
       intentService && typeof intentService.classifyIntent === "function"
         ? intentService.classifyIntent(userPrompt)
         : "meaningful";
-    const language =
+    const legacyLanguage =
       intentService && typeof intentService.detectLanguage === "function"
         ? intentService.detectLanguage(userPrompt)
         : "english";
-    const tone =
+    const legacyTone =
       intentService && typeof intentService.getTone === "function"
         ? intentService.getTone(userPrompt)
         : "formal";
+    const responseMode = String(
+      plannerPlan && plannerPlan.response_mode ? plannerPlan.response_mode : legacyResponseMode
+    ).toLowerCase() === "short"
+      ? "short"
+      : "detailed";
+    const conversationIntent = plannerPlan
+      ? mapPlanTaskToConversationIntent(plannerPlan.task, legacyConversationIntent)
+      : legacyConversationIntent;
+    const language = plannerPlan && plannerPlan.language ? plannerPlan.language : legacyLanguage;
+    const tone = plannerPlan
+      ? conversationIntent === "greeting" || conversationIntent === "casual"
+        ? "casual"
+        : "formal"
+      : legacyTone;
     const isCasualMode = tone === "casual";
+
+    function extractPromptSection(promptText, sectionLabel) {
+      const source = String(promptText || "");
+      if (!source) {
+        return "";
+      }
+
+      const header = `[${sectionLabel}]`;
+      const start = source.indexOf(header);
+      if (start < 0) {
+        return "";
+      }
+
+      const afterHeader = source.slice(start + header.length);
+      const nextHeaderIndex = afterHeader.search(/\n\[[^\]]+\]/);
+      const rawSection = nextHeaderIndex >= 0 ? afterHeader.slice(0, nextHeaderIndex) : afterHeader;
+      return rawSection.trim();
+    }
 
     if (!rawPrompt && conversationIntent === "greeting") {
       const casualReply = generateCasualReply(userPrompt, language);
@@ -1627,40 +1743,47 @@ Your job:
     }
 
     const explicitFileRequest = detectExplicitFileRequest(userPrompt);
-    const intentResult = !rawPrompt
+    const plannerTask = String(plannerPlan && plannerPlan.task ? plannerPlan.task : "").trim().toLowerCase();
+    const plannerTools = Array.isArray(plannerPlan && plannerPlan.tools)
+      ? plannerPlan.tools.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
+      : [];
+    const plannerFormat = String(plannerPlan && plannerPlan.format ? plannerPlan.format : "auto").trim().toLowerCase();
+
+    if (!rawPrompt && plannerTask === "image") {
+      return generateImageResponseFromPrompt(userPrompt, payload, plannerPlan);
+    }
+
+    const shouldUseLegacyIntentFallback =
+      !plannerPlan ||
+      isLikelyImageGenerationRequest(userPrompt) ||
+      detectExplicitFileRequest(userPrompt);
+    const fallbackIntentResult = !rawPrompt && shouldUseLegacyIntentFallback
       ? await classifyTaskIntent(userPrompt, { hasScreenshot: Boolean(screenshotBase64) })
       : { intent: "general", needs_web: false, needs_rag: false };
+    const plannerTaskIntent = plannerTask ? mapPlanTaskToLegacyIntent(plannerTask) : "";
+    const intentResult = {
+      intent: plannerTaskIntent || String(fallbackIntentResult && fallbackIntentResult.intent ? fallbackIntentResult.intent : "general"),
+      needs_web: plannerTaskIntent ? false : Boolean(fallbackIntentResult && fallbackIntentResult.needs_web),
+      needs_rag:
+        plannerTaskIntent === "coding"
+          ? true
+          : plannerTaskIntent
+            ? false
+            : Boolean(fallbackIntentResult && fallbackIntentResult.needs_rag)
+    };
     const normalizedIntent = String(intentResult && intentResult.intent ? intentResult.intent : "general");
     const needsWeb = Boolean(intentResult && intentResult.needs_web);
     const needsRag = Boolean(intentResult && intentResult.needs_rag);
     const openAIEnabled = Boolean(getOpenAIClient());
     const geminiEnabled = Boolean(getGeminiClient());
 
-    const modeInstruction =
-      conversationIntent === "casual" || responseMode === "minimal"
-        ? "Respond in exactly one line. Be natural and concise."
-        : responseMode === "short"
-          ? "Respond briefly in 2-4 sentences. Keep it clear and direct. Do not use headings or bullets for short replies."
-          : "Respond clearly in natural teacher-like conversation. Start simple, then example, then optional extra detail. For readability in detailed replies, use light structure with bold labels like **Answer:**, **Example:**, **Note:** and use bullet points only when listing multiple items.";
-    const toneInstruction =
-      tone === "casual"
-        ? "Respond in a friendly, natural, conversational tone. No headings."
-        : "";
-    const languageInstruction = "Respond in the same language as the user input. Do not mix languages.";
-    const responseIntentInstruction =
-      conversationIntent === "casual"
-        ? "Respond in 1-2 lines. Keep it natural and conversational."
-        : conversationIntent === "meaningful"
-          ? responseMode === "short"
-            ? "Respond helpfully to the user's meaning in a compact style. Do not ask unnecessary follow-up questions."
-            : "Respond helpfully to the user's meaning. Keep flow natural but readable; use light formatting only when it improves clarity. Ask a brief follow-up only if needed. Do not greet again."
-          : "";
-
     if (normalizedIntent === "hybrid") {
       const preferredModelName = openAIEnabled ? modelService.getOpenAIModel() : modelService.getGeminiModel();
       const budget = modelService.getModelBudget(preferredModelName);
       const hybridPromptBase = promptBuilder.buildFinalPrompt({
         systemPrompt: selectPrompt("explanation").promptText,
+        responseMode,
+        plan: plannerPlan,
         userInput: userPrompt,
         context: {
           contextMessages: payload.contextMessages,
@@ -1674,7 +1797,7 @@ Your job:
         toolsData: null
       });
 
-      const hybridPrompt = `${hybridPromptBase}\n\n${modeInstruction}${toneInstruction ? `\n${toneInstruction}` : ""}\n${languageInstruction}${responseIntentInstruction ? `\n${responseIntentInstruction}` : ""}\n\nProvide an explanation first. Keep it accurate and useful before image generation.`;
+      const hybridPrompt = `${hybridPromptBase}\n\nProvide an explanation first. Keep it accurate and useful before image generation.`;
 
       let explanationText = "I can explain this and generate an image for it.";
       let explanationUsedModel = "none";
@@ -1710,7 +1833,7 @@ Your job:
         }
       }
 
-      const imageResult = await generateImageResponseFromPrompt(userPrompt, payload);
+      const imageResult = await generateImageResponseFromPrompt(userPrompt, payload, plannerPlan);
       const hasImage = Boolean(imageResult && (imageResult.imageUrl || (Array.isArray(imageResult.imageUrls) && imageResult.imageUrls.length > 0)));
 
       return {
@@ -1745,24 +1868,47 @@ Your job:
     }
 
     const fileRequested = !rawPrompt && explicitFileRequest && normalizedIntent === "document_formatting";
+    const plannerWantsImage = plannerTask === "image" || plannerTools.includes("image_gen");
     const shouldGenerateImage =
-      !rawPrompt && !fileRequested && isLikelyImageGenerationRequest(userPrompt) && normalizedIntent !== "document_formatting";
+      !rawPrompt &&
+      !fileRequested &&
+      (plannerWantsImage || (!plannerPlan && isLikelyImageGenerationRequest(userPrompt))) &&
+      normalizedIntent !== "document_formatting";
 
     if (shouldGenerateImage) {
-      return generateImageResponseFromPrompt(userPrompt, payload);
+      return generateImageResponseFromPrompt(userPrompt, payload, plannerPlan);
     }
 
     const outputTypes = fileRequested ? deriveOutputTypesFromPrompt(userPrompt) : [];
 
-    const selectedPrompt = selectPrompt(normalizedIntent);
+    let selectedPrompt = selectPrompt(normalizedIntent);
+    if (plannerTask === "code") {
+      selectedPrompt = { key: "code", promptText: CODE_SYSTEM_PROMPT };
+    } else if (plannerTask === "explain") {
+      selectedPrompt = selectPrompt("explanation");
+    } else if (plannerTask === "search") {
+      selectedPrompt = selectPrompt("web_research");
+    }
     const skipWebSearch = shouldSkipWebSearchForPrompt(userPrompt);
     const dynamicRateQuery = isDynamicRateQuery(userPrompt);
+    const hasExplicitWebSignal = /\b(search|latest|news|update)\b/i.test(userPrompt);
+    const stableFactQuery = /\b(who\s+is|what\s+is)\b/i.test(userPrompt);
+    const hasRecencySignal = /\b(current|currently|today|now|latest|recent|202\d)\b/i.test(userPrompt);
+    const shouldBypassWebSearchForStableFact =
+      stableFactQuery && !hasExplicitWebSignal && !hasRecencySignal && !isCurrentEventsPrompt(userPrompt);
+    const shouldHeuristicallySearch =
+      promptBuilder.shouldTriggerWebSearch(userPrompt) &&
+      (normalizedIntent === "web_research" || isCurrentEventsPrompt(userPrompt) || hasExplicitWebSignal);
+    const plannerSelectedTool =
+      plannerTools.includes("web_search") || plannerTask === "search" ? "webSearch" : "";
     const selectedTool =
-      !rawPrompt &&
-      !screenshotBase64 &&
-      !skipWebSearch &&
-      (needsWeb || promptBuilder.shouldTriggerWebSearch(userPrompt) || dynamicRateQuery)
-        ? "webSearch"
+      !rawPrompt && !screenshotBase64 && !skipWebSearch
+        ? plannerSelectedTool ||
+          (!plannerPlan &&
+          !shouldBypassWebSearchForStableFact &&
+          (needsWeb || shouldHeuristicallySearch || dynamicRateQuery)
+            ? "webSearch"
+            : "")
         : "";
 
     console.info("[ai] request:start", {
@@ -1828,6 +1974,8 @@ Your job:
 
     const finalPromptBase = promptBuilder.buildFinalPrompt({
       systemPrompt: selectedPrompt.promptText,
+      responseMode,
+      plan: plannerPlan,
       userInput: userPrompt,
       context: {
         contextMessages: payload.contextMessages,
@@ -1841,6 +1989,24 @@ Your job:
       toolsData: webSearchResult ? { webSearch: webSearchResult } : toolResult ? { toolResult } : null
     });
 
+    const selectedSpecialPrompt = extractPromptSection(finalPromptBase, "SELECTED SPECIAL PROMPT");
+    const masterSystemPrompt = extractPromptSection(finalPromptBase, "MASTER SYSTEM PROMPT");
+
+    console.info("[ai] prompt:routing", {
+      conversationIntent,
+      responseMode,
+      language,
+      tone,
+      normalizedIntent,
+      plannerTask,
+      selectedPromptKey: selectedPrompt.key || "default",
+      selectedPromptPreview: String(selectedPrompt.promptText || "").slice(0, 160)
+    });
+    console.info("[ai] prompt:final-system", {
+      masterSystemPrompt: masterSystemPrompt.slice(0, 400),
+      selectedSpecialPrompt: selectedSpecialPrompt.slice(0, 400)
+    });
+
     const expectsLongResponse =
       normalizedIntent === "document_formatting" ||
       normalizedIntent === "web_research" ||
@@ -1848,8 +2014,8 @@ Your job:
       userPrompt.length > 180;
 
     const finalPrompt = expectsLongResponse
-      ? `${finalPromptBase}${modeInstruction ? `\n\n${modeInstruction}` : ""}${toneInstruction ? `\n${toneInstruction}` : ""}\n${languageInstruction}${responseIntentInstruction ? `\n${responseIntentInstruction}` : ""}\n\nMake the response comprehensive and in-depth.`
-      : `${finalPromptBase}${modeInstruction ? `\n\n${modeInstruction}` : ""}${toneInstruction ? `\n${toneInstruction}` : ""}\n${languageInstruction}${responseIntentInstruction ? `\n${responseIntentInstruction}` : ""}`;
+      ? `${finalPromptBase}\n\nMake the response comprehensive and in-depth.`
+      : finalPromptBase;
 
     if (screenshotBase64 && !allowExternalScreenshot) {
       return {
@@ -1864,14 +2030,7 @@ Your job:
     }
 
     if (!openAIEnabled && !geminiEnabled) {
-      return {
-        response: "No AI API configured.",
-        usedModel: "none",
-        currentApp: options.getCurrentApp(),
-        provider: "unconfigured",
-        openAIEnabled,
-        geminiEnabled
-      };
+      ensureAiProviderConfigured();
     }
 
     try {
@@ -1903,6 +2062,42 @@ Your job:
         ...responsePayload,
         response: qualityCheckedResponse
       };
+
+      const requiresTableFormat = plannerFormat === "table";
+      const hasMarkdownTable = /\|[^\n]+\|/.test(String(normalizedResponsePayload.response || ""));
+      if (requiresTableFormat && !hasMarkdownTable) {
+        const tableRetryPrompt = [
+          finalPrompt,
+          "",
+          "IMPORTANT RETRY INSTRUCTION:",
+          "- User requested table format.",
+          "- Respond ONLY with a markdown table.",
+          "- No paragraphs or extra explanation outside the table.",
+          "- Include header and at least one data row."
+        ].join("\n");
+
+        try {
+          const retryPayload = await controlService.request({
+            finalPrompt: tableRetryPrompt,
+            screenshotBase64,
+            rawPrompt,
+            userPrompt,
+            intentKey: `${cacheIntentKey}:table-retry`,
+            inputType: "teaching",
+            systemPrompt: "",
+            openAIEnabled,
+            geminiEnabled,
+            modelBudget: budget
+          });
+
+          const retryText = String(retryPayload && retryPayload.response ? retryPayload.response : "").trim();
+          if (/\|[^\n]+\|/.test(retryText)) {
+            normalizedResponsePayload.response = retryText;
+            normalizedResponsePayload.usedModel = retryPayload.usedModel || normalizedResponsePayload.usedModel;
+            normalizedResponsePayload.provider = retryPayload.provider || normalizedResponsePayload.provider;
+          }
+        } catch (_error) {}
+      }
 
       console.info("[ai] request:end", {
         durationMs: Date.now() - requestStartedAt,

@@ -67,24 +67,6 @@
             <ul id="conversationList" class="conversation-list sidebar-list" aria-label="Conversation list"></ul>
           </section>
 
-          <!-- Tool cards -->
-          <div class="n-tool-list" role="list">
-            <button id="promptLibraryDesktopBtn" type="button" class="n-tool-card n-tool-card--blue" role="listitem">
-              <span class="n-tool-emoji" aria-hidden="true">🎓</span>
-              <div>
-                <p class="n-tool-title">Prompt Library</p>
-                <p class="n-tool-desc">Explore ready-made prompts</p>
-              </div>
-            </button>
-            <button id="courseHelpBtn" type="button" class="n-tool-card n-tool-card--green" role="listitem">
-              <span class="n-tool-emoji" aria-hidden="true">📚</span>
-              <div>
-                <p class="n-tool-title">Course Help</p>
-                <p class="n-tool-desc">Step-by-step course guidance</p>
-              </div>
-            </button>
-          </div>
-
           <!-- Prompt Library list -->
           <section class="sidebar-section hidden-sidebar-section">
             <h3 class="sidebar-section-title">
@@ -202,11 +184,18 @@
         <!-- Composer -->
         <form id="chatForm" class="composer" autocomplete="off" novalidate>
           <div class="composer-row">
-            <label class="tool-btn n-attach-label" title="Attach file" tabindex="0">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-              <input type="file" id="fileAttachInput" class="hidden" accept="*/*" aria-label="Attach file" />
-            </label>
-            <button id="screenshotButton" type="button" class="tool-btn">
+            <div class="composer-tools" id="composerToolsWrap">
+              <button id="composerToolsButton" type="button" class="tool-btn n-attach-label" aria-haspopup="menu" aria-expanded="false" title="Tools">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+              <div id="composerToolsMenu" class="composer-tools-menu hidden" role="menu" aria-label="Composer tools">
+                <button id="composerAttachFileBtn" type="button" class="composer-tools-item" role="menuitem">Add file</button>
+                <button id="composerScreenshotBtn" type="button" class="composer-tools-item" role="menuitem">Take screenshot</button>
+                <button id="composerPromptLibraryBtn" type="button" class="composer-tools-item" role="menuitem">Prompt Library</button>
+              </div>
+            </div>
+            <input type="file" id="fileAttachInput" class="hidden" accept="*/*" aria-label="Attach file" />
+            <button id="screenshotButton" type="button" class="tool-btn composer-hidden-action" tabindex="-1" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/><path d="M9 2h6l2 4H7z"/></svg>
               <span>Screenshot</span>
             </button>
@@ -216,6 +205,9 @@
               placeholder="Ask IFDA AI Tutor..."
               aria-label="Message input"
             ></textarea>
+            <button id="voiceButton" type="button" class="voice-btn" aria-label="Start voice input" title="Voice input" aria-pressed="false">
+              <span aria-hidden="true">🎤</span>
+            </button>
             <button id="sendButton" type="submit" class="send-btn" aria-label="Send message">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
             </button>
@@ -234,6 +226,14 @@
             <label class="privacy-toggle" title="Enable or disable voice mode.">
               <input id="voiceToggle" type="checkbox" />
               <span id="voiceToggleLabel">Voice Mode: OFF</span>
+            </label>
+            <label class="voice-output-wrap" title="Choose transcript output style.">
+              <span class="voice-output-label">Voice text:</span>
+              <select id="voiceOutputMode" class="voice-output-select" aria-label="Voice transcript output mode">
+                <option value="auto" selected>As spoken</option>
+                <option value="hindi">Hindi</option>
+                <option value="english">English</option>
+              </select>
             </label>
             <div id="voiceLivePreview" class="voice-live-preview hidden" aria-live="polite"></div>
             <div id="statusText" class="status-text" role="status" aria-live="polite">Ready</div>
@@ -326,13 +326,13 @@
               <p class="ifda-menu-item-desc">Explore ready-made prompts</p>
             </div>
           </button>
-          <button type="button" class="ifda-menu-item ifda-menu-item--green" id="menuCourseHelpBtn">
+          <!-- <button type="button" class="ifda-menu-item ifda-menu-item--green" id="menuCourseHelpBtn">
             <span class="ifda-menu-emoji" aria-hidden="true">📚</span>
             <div>
               <p class="ifda-menu-item-title">Course Help</p>
               <p class="ifda-menu-item-desc">Step-by-step course guidance</p>
             </div>
-          </button>
+          </button> -->
           <button type="button" class="ifda-menu-item ifda-menu-item--yellow" id="menuAskedQuestionsBtn">
             <span class="ifda-menu-emoji" aria-hidden="true">💡</span>
             <div>

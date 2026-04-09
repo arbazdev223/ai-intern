@@ -401,7 +401,7 @@ function createWindowManager(options = {}) {
       minHeight: constants.SMALL_CHAT_HEIGHT,
       minimizable: true,
       maximizable: true,
-      alwaysOnTop: true,
+      alwaysOnTop: false,
       autoHideMenuBar: true,
       title: "AI Assistant",
       backgroundColor: "#12151d",

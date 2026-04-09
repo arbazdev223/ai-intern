@@ -700,12 +700,27 @@ You MUST follow these rules strictly:
     }
 
     const userInput = String(options.userInput || "").trim();
-    const detectedLanguage = detectLanguage(userInput);
-    const conversationIntent = classifyConversationIntent(userInput);
+    const detectedLanguageFromInput = detectLanguage(userInput);
+    const conversationIntentFromInput = classifyConversationIntent(userInput);
     const casualInput = isCasualInput(userInput);
     const context = options.context && typeof options.context === "object" ? options.context : {};
     const specializedPrompt = String(options.systemPrompt || "").trim();
+    const responseMode = String(options.responseMode || "").trim().toLowerCase();
+    const plan = options.plan && typeof options.plan === "object" ? options.plan : null;
+    const detectedLanguage = String(plan && plan.language ? plan.language : detectedLanguageFromInput).toLowerCase();
+    const conversationIntent = String(plan && (plan.task || plan.intent) ? (plan.task || plan.intent) : conversationIntentFromInput).toLowerCase();
+    const plannerTask = String(plan && plan.task ? plan.task : "").trim().toLowerCase();
+    const plannerSubtask = String(plan && plan.subtask ? plan.subtask : "").trim().toLowerCase();
+    const plannerTools = Array.isArray(plan && plan.tools)
+      ? plan.tools.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
+      : [];
+    const plannerTopic = String(plan && plan.topic ? plan.topic : "").trim();
+    const plannerResponseMode = String(plan && plan.response_mode ? plan.response_mode : responseMode).toLowerCase();
+    const plannerFormat = String(plan && plan.format ? plan.format : "auto").trim().toLowerCase();
+    const plannerImageType = String(plan && plan.image_type ? plan.image_type : "auto").trim().toLowerCase();
     const isExplanationMode = /you are an expert explainer ai\./i.test(specializedPrompt);
+    const isExplainTask = plannerTask === "explain" || isExplanationMode;
+    const forceComparisonFormat = shouldUseComparisonFormat(plannerTopic, userInput);
     const toolsBlock = formatToolsData(options.toolsData);
     const memorySummary = String(context.memorySummary || "").trim();
     const detectedAppName = String(context.detectedAppName || "").trim();
@@ -723,6 +738,23 @@ You MUST follow these rules strictly:
       : MASTER_SYSTEM_PROMPT;
 
     const blocks = ["[MASTER SYSTEM PROMPT]", effectiveMasterPrompt];
+
+    if (plan) {
+      blocks.push(
+        "",
+        "[PLANNER OUTPUT]",
+        `- Task: ${plannerTask || "chat"}`,
+        `- Subtask: ${plannerSubtask || "basic"}`,
+        `- Tools: ${plannerTools.length > 0 ? plannerTools.join(", ") : "none"}`,
+        `- Intent: ${conversationIntent || "general"}`,
+        `- Topic: ${plannerTopic || "general"}`,
+        `- Language: ${detectedLanguage || "english"}`,
+        `- Response mode: ${plannerResponseMode || "detailed"}`,
+        `- Format: ${plannerFormat || "auto"}`,
+        `- Image type: ${plannerImageType || "auto"}`,
+        "- Follow this plan unless user safety or hard constraints require otherwise."
+      );
+    }
 
     if (specializedPrompt) {
       blocks.push("", "[SELECTED SPECIAL PROMPT]", specializedPrompt);
@@ -780,10 +812,101 @@ You MUST follow these rules strictly:
       `- User intent detected: ${conversationIntent}`,
       "- NEVER restart conversation with greeting.",
       "- If user shared personal info/statement, respond to that meaning first.",
-      "- Never ignore user intent."
+      "- Never ignore user intent.",
+      "- If user requests a format (table, list, bullets), you MUST strictly follow it."
     );
 
-    if (casualInput) {
+    if (plannerFormat === "table") {
+      blocks.push(
+        "",
+        "FORMAT ENFORCEMENT (MANDATORY):",
+        "IMPORTANT:",
+        "- You MUST respond ONLY in table format.",
+        "- Do NOT write paragraphs.",
+        "- Use proper markdown table.",
+        "- Include headers and rows.",
+        "",
+        "Example:",
+        "User: difference between ML and DL in table format",
+        "| Feature | ML | DL |",
+        "|--------|----|----|",
+        "| Data | Less | More |"
+      );
+    } else if (plannerFormat === "list") {
+      blocks.push(
+        "",
+        "FORMAT ENFORCEMENT (MANDATORY):",
+        "- Respond only as a clean list.",
+        "- Do not add paragraph blocks before or after the list."
+      );
+    } else if (plannerFormat === "bullets") {
+      blocks.push(
+        "",
+        "FORMAT ENFORCEMENT (MANDATORY):",
+        "- Respond only with bullet points.",
+        "- Do not add paragraph blocks before or after bullet points."
+      );
+    }
+
+    if (isExplainTask) {
+      blocks.push(
+        "",
+        "TEACHING MODE (MANDATORY):",
+        "- You are a teacher.",
+        "- Explain step-by-step: start simple, then go deeper.",
+        "- Use examples.",
+        "- Use comparison if needed.",
+        "- Use bullet points or clear sections.",
+        "- Use a simple real-life analogy when possible.",
+        "",
+        "EXPLANATION STRUCTURE (MANDATORY):",
+        "1. Simple Definition",
+        "2. Key Points",
+        "3. Example",
+        forceComparisonFormat
+          ? "4. Comparison (table-style bullets with side-by-side differences)"
+          : "4. Comparison (only if multiple topics)",
+        "5. Summary"
+      );
+
+      if (forceComparisonFormat) {
+        blocks.push(
+          "",
+          "COMPARISON FORMAT (MANDATORY):",
+          "- Topic indicates comparison (vs or multiple entities).",
+          "- Present comparison in table-style bullet pairs.",
+          "- Cover definition, key differences, and use-cases for each side."
+        );
+      }
+    }
+
+    if (isExplainTask) {
+      blocks.push(
+        "",
+        "FINAL OUTPUT RULES (MANDATORY):",
+        "- Use clear headings for each section",
+        "- Use bullets for key points",
+        "- Avoid plain paragraph dump",
+        "- Keep flow layered: simple to deep",
+        "- Keep explanation readable for beginners"
+      );
+    } else if (responseMode === "minimal") {
+      blocks.push(
+        "",
+        "FINAL OUTPUT RULES (MANDATORY):",
+        "- Keep response to exactly one natural line",
+        "- No headings, no bullets",
+        "- Keep it direct and human"
+      );
+    } else if (responseMode === "short") {
+      blocks.push(
+        "",
+        "FINAL OUTPUT RULES (MANDATORY):",
+        "- Keep response concise in 2-4 sentences",
+        "- No headings unless user explicitly asks",
+        "- Answer directly first, then one brief clarifier if useful"
+      );
+    } else if (casualInput) {
       blocks.push(
         "",
         "FINAL OUTPUT RULES (MANDATORY):",
@@ -884,7 +1007,74 @@ You MUST follow these rules strictly:
       : false;
   }
 
+  function shouldUseComparisonFormat(topic, userInput) {
+    const source = `${String(topic || "")} ${String(userInput || "")}`.toLowerCase();
+    if (!source.trim()) {
+      return false;
+    }
+
+    if (/\bvs\b|\bversus\b/.test(source)) {
+      return true;
+    }
+
+    const conjunctionPattern = /\b\w+\s+(and|aur|or|ya)\s+\w+\b/;
+    return conjunctionPattern.test(source);
+  }
+
+  function buildImageGenerationPrompt(options = {}) {
+    const plan = options.plan && typeof options.plan === "object" ? options.plan : {};
+    const userInput = String(options.userInput || "").trim();
+    const topic = String(plan.topic || userInput || "general concept").trim();
+    const requestedType = String(plan.image_type || "auto").trim().toLowerCase();
+
+    const resolvedType =
+      requestedType === "diagram" ||
+      requestedType === "flowchart" ||
+      requestedType === "comparison" ||
+      requestedType === "realistic"
+        ? requestedType
+        : "diagram";
+
+    const baseRules = [
+      "Create an image that matches this topic exactly:",
+      topic,
+      "",
+      "STRICT RULES:",
+      "- DO NOT generate unrelated symbolic or random visuals.",
+      "- ALWAYS match the topic exactly.",
+      "- Keep it clean, minimal, labeled, and educational."
+    ];
+
+    if (resolvedType === "flowchart") {
+      baseRules.push(
+        "",
+        "Type: flowchart",
+        "Create a clear step-by-step flowchart with labeled boxes and directional arrows."
+      );
+    } else if (resolvedType === "comparison") {
+      baseRules.push(
+        "",
+        "Type: comparison infographic",
+        "Create a side-by-side comparison diagram with clear labels for differences and similarities."
+      );
+    } else if (resolvedType === "realistic") {
+      baseRules.push(
+        "",
+        "Type: realistic",
+        "Create a realistic, topic-accurate visual while preserving clear educational labeling."
+      );
+    } else {
+      baseRules.push(
+        "",
+        "Type: educational diagram",
+        "Create a clean explanatory diagram with labeled components and arrows where needed."
+      );
+    }
+
+    return baseRules.join("\n");
+  }
   return {
+    buildImageGenerationPrompt,
     buildFinalPrompt,
     buildLegacyFinalPrompt,
     buildPromptWithOcr,

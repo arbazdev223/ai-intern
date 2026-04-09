@@ -1,6 +1,6 @@
 {
   "name": "ifda-ai",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "author": "IFDA",
   "description": "Electron desktop chat app using OpenAI and Gemini APIs",
   "main": "main.js",
@@ -12,7 +12,8 @@
     "generate:sri": "node scripts/generateSRI.js",
     "check:sri": "node scripts/generateSRI.js --check",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "test:ai": "node -r dotenv/config ai_test_runner.js"
   },
   "build": {
     "directories": {
@@ -52,6 +53,7 @@
     "active-win": "^8.2.1",
     "docx": "^9.5.1",
     "dompurify": "^3.3.2",
+    "dotenv": "^16.6.1",
     "electron-updater": "^6.8.3",
     "exceljs": "^4.4.0",
     "highlight.js": "^11.11.1",

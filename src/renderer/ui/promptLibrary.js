@@ -1,5 +1,10 @@
 (function (root) {
   const constants = root.SharedModules.constants;
+  const PROMPT_LIBRARY_API_BASE = "https://ims.ifda.in/api/prompt-library";
+  const PROMPT_LIBRARY_TOKEN_KEY = "assistant.promptLibraryBearerToken";
+  const PROMPT_LIBRARY_MASTER_SECRET_KEY = "assistant.promptLibraryMasterSecret";
+  const PROMPT_LIBRARY_USER_ID_KEY = "assistant.promptLibraryUserId";
+  const PROMPT_LIBRARY_API_TIMEOUT_MS = 15000;
 
   function createPromptLibraryController(options = {}) {
     const refs = options.refs;
@@ -10,6 +15,7 @@
     let promptSearchQuery = "";
     let lastPromptCatalog = [];
     let savedPromptDialogState = null;
+    let promptCategories = [];
 
     function createSavedPromptId() {
       return `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -33,6 +39,299 @@
       }
 
       return { id, title, prompt };
+    }
+
+    function normalizePromptTemplateItem(item) {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const id = String(item.id || "").trim();
+      const title = String(item.title || "").trim();
+      const prompt = String(item.prompt || "").trim();
+      const categoryId = String(item.categoryId || "").trim();
+
+      if (!id || !title || !prompt || !categoryId) {
+        return null;
+      }
+
+      return {
+        id,
+        title,
+        prompt,
+        categoryId
+      };
+    }
+
+    function readSetting(key) {
+      if (typeof localStorage === "undefined") {
+        return "";
+      }
+
+      try {
+        return String(localStorage.getItem(key) || "").trim();
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    function getAuthContext() {
+      const token = readSetting(PROMPT_LIBRARY_TOKEN_KEY);
+      const masterSecret = readSetting(PROMPT_LIBRARY_MASTER_SECRET_KEY);
+      const userId = readSetting(PROMPT_LIBRARY_USER_ID_KEY);
+
+      if (token) {
+        return { mode: "bearer", token, masterSecret: "", userId: "" };
+      }
+
+      if (masterSecret) {
+        return { mode: "master", token: "", masterSecret, userId };
+      }
+
+      return { mode: "none", token: "", masterSecret: "", userId: "" };
+    }
+
+    function buildAuthHeaders(authContext) {
+      const headers = {
+        "Content-Type": "application/json"
+      };
+
+      if (!authContext || authContext.mode === "none") {
+        return headers;
+      }
+
+      if (authContext.mode === "bearer") {
+        headers.Authorization = `Bearer ${authContext.token}`;
+      } else if (authContext.mode === "master") {
+        headers["x-master-secret"] = authContext.masterSecret;
+      }
+
+      return headers;
+    }
+
+    async function apiRequest(path, requestOptions = {}) {
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller
+        ? setTimeout(() => {
+            controller.abort();
+          }, PROMPT_LIBRARY_API_TIMEOUT_MS)
+        : null;
+
+      try {
+        const response = await fetch(`${PROMPT_LIBRARY_API_BASE}${path}`, {
+          method: requestOptions.method || "GET",
+          headers: requestOptions.headers || {},
+          body: requestOptions.body,
+          signal: controller ? controller.signal : undefined
+        });
+
+        const text = await response.text();
+        let payload = {};
+        try {
+          payload = text ? JSON.parse(text) : {};
+        } catch (_error) {
+          payload = {};
+        }
+
+        if (!response.ok) {
+          const message =
+            (payload && payload.message && String(payload.message)) ||
+            `Prompt library API request failed (${response.status}).`;
+          throw new Error(message);
+        }
+
+        return payload;
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    }
+
+    function parseArrayPayload(payload) {
+      if (Array.isArray(payload)) {
+        return payload;
+      }
+
+      if (payload && Array.isArray(payload.data)) {
+        return payload.data;
+      }
+
+      return [];
+    }
+
+    function setPromptCategories(nextCategories) {
+      if (!Array.isArray(nextCategories) || nextCategories.length === 0) {
+        return;
+      }
+
+      promptCategories = nextCategories;
+    }
+
+    async function fetchCategoriesFromApi() {
+      const payload = await apiRequest("/categories");
+      const rows = parseArrayPayload(payload);
+
+      return rows
+        .map((item) => {
+          const id = String(item && item.id ? item.id : "").trim();
+          const title = String(item && item.title ? item.title : "").trim();
+          const description = String(item && item.description ? item.description : "").trim();
+          const sortOrder = Number(item && item.sortOrder);
+
+          if (!id || !title) {
+            return null;
+          }
+
+          return {
+            id,
+            title,
+            description,
+            sortOrder: Number.isFinite(sortOrder) ? sortOrder : 100,
+            prompts: []
+          };
+        })
+        .filter(Boolean)
+        .sort((left, right) => left.sortOrder - right.sortOrder);
+    }
+
+    async function fetchTemplatesFromApi() {
+      const payload = await apiRequest("/templates?page=1&limit=500");
+      const rows = parseArrayPayload(payload);
+      return rows.map(normalizePromptTemplateItem).filter(Boolean);
+    }
+
+    async function hydratePromptCatalogFromApi() {
+      try {
+        const [categories, templates] = await Promise.all([
+          fetchCategoriesFromApi(),
+          fetchTemplatesFromApi()
+        ]);
+
+        if (!categories.length) {
+          return;
+        }
+
+        const byId = new Map();
+        categories.forEach((category) => {
+          byId.set(category.id, {
+            id: category.id,
+            title: category.title,
+            description: category.description,
+            sortOrder: category.sortOrder,
+            prompts: []
+          });
+        });
+
+        templates.forEach((template) => {
+          const bucket = byId.get(template.categoryId);
+          if (!bucket) {
+            return;
+          }
+
+          bucket.prompts.push({
+            id: template.id,
+            title: template.title,
+            prompt: template.prompt
+          });
+        });
+
+        const normalized = Array.from(byId.values()).filter((item) => item.prompts.length > 0);
+        if (!normalized.length) {
+          return;
+        }
+
+        setPromptCategories(normalized);
+        renderPromptLibrary();
+        refreshPromptBrowserIfOpen();
+      } catch (_error) {
+        // Fallback stays on local constants when API is unavailable.
+      }
+    }
+
+    async function fetchSavedPromptsFromApi() {
+      const authContext = getAuthContext();
+      if (authContext.mode === "none") {
+        return null;
+      }
+
+      let query = "";
+      if (authContext.mode === "master" && authContext.userId) {
+        query = `?userId=${encodeURIComponent(authContext.userId)}`;
+      }
+
+      const payload = await apiRequest(`/saved${query}`, {
+        method: "GET",
+        headers: buildAuthHeaders(authContext)
+      });
+
+      return parseArrayPayload(payload).map(normalizeSavedPromptItem).filter(Boolean);
+    }
+
+    async function createSavedPromptOnApi(payload) {
+      const authContext = getAuthContext();
+      if (authContext.mode === "none") {
+        return null;
+      }
+
+      const body = {
+        title: payload.title,
+        prompt: payload.prompt,
+        sourceTemplateId: payload.sourceTemplateId || undefined,
+        isFavorite: Boolean(payload.isFavorite)
+      };
+
+      if (authContext.mode === "master" && authContext.userId) {
+        body.userId = authContext.userId;
+      }
+
+      const response = await apiRequest("/saved", {
+        method: "POST",
+        headers: buildAuthHeaders(authContext),
+        body: JSON.stringify(body)
+      });
+
+      const created = response && response.data ? response.data : response;
+      return normalizeSavedPromptItem(created);
+    }
+
+    async function updateSavedPromptOnApi(promptId, payload) {
+      const authContext = getAuthContext();
+      if (authContext.mode === "none") {
+        return false;
+      }
+
+      const body = {
+        title: payload.title,
+        prompt: payload.prompt,
+        isFavorite: payload.isFavorite
+      };
+
+      if (authContext.mode === "master" && authContext.userId) {
+        body.userId = authContext.userId;
+      }
+
+      await apiRequest(`/saved/${encodeURIComponent(promptId)}`, {
+        method: "PATCH",
+        headers: buildAuthHeaders(authContext),
+        body: JSON.stringify(body)
+      });
+
+      return true;
+    }
+
+    async function deleteSavedPromptOnApi(promptId) {
+      const authContext = getAuthContext();
+      if (authContext.mode === "none") {
+        return false;
+      }
+
+      await apiRequest(`/saved/${encodeURIComponent(promptId)}`, {
+        method: "DELETE",
+        headers: buildAuthHeaders(authContext)
+      });
+
+      return true;
     }
 
     function loadSavedPrompts() {
@@ -126,7 +425,7 @@
     }
 
     function getPromptCategoryFilters() {
-      const base = constants.PROMPT_LIBRARY_CATEGORIES.map((category) => ({
+      const base = promptCategories.map((category) => ({
         id: category.id,
         title: category.title
       }));
@@ -139,7 +438,7 @@
     }
 
     function buildPromptCatalog() {
-      const libraryEntries = constants.PROMPT_LIBRARY_CATEGORIES.flatMap((category) =>
+      const libraryEntries = promptCategories.flatMap((category) =>
         category.prompts.map((item) => ({
           key: `library:${item.id}`,
           source: "library",
@@ -194,12 +493,12 @@
 
     function getPromptLibraryCategory(categoryId) {
       const id = String(categoryId || "");
-      return constants.PROMPT_LIBRARY_CATEGORIES.find((category) => category.id === id) || null;
+      return promptCategories.find((category) => category.id === id) || null;
     }
 
     function findPromptTemplateById(templateId) {
       const id = String(templateId || "");
-      for (const category of constants.PROMPT_LIBRARY_CATEGORIES) {
+      for (const category of promptCategories) {
         const item = category.prompts.find((prompt) => prompt.id === id);
         if (item) {
           return { category, item };
@@ -215,7 +514,7 @@
 
       refs.promptLibraryList.innerHTML = "";
 
-      constants.PROMPT_LIBRARY_CATEGORIES.forEach((category) => {
+      promptCategories.forEach((category) => {
         const li = document.createElement("li");
         li.className = "prompt-library-item";
         li.dataset.promptCategoryId = category.id;
@@ -530,7 +829,7 @@
       hidePromptBrowser();
     }
 
-    function savePromptToLibrary(title, promptText) {
+    async function savePromptToLibrary(title, promptText, saveOptions = {}) {
       const normalized = normalizeSavedPromptDraft(title, promptText);
       if (!normalized.title || !normalized.prompt) {
         return null;
@@ -545,11 +844,25 @@
         return existing;
       }
 
-      const created = {
+      let created = {
         id: createSavedPromptId(),
         title: normalized.title,
         prompt: normalized.prompt
       };
+
+      try {
+        const remoteCreated = await createSavedPromptOnApi({
+          title: normalized.title,
+          prompt: normalized.prompt,
+          sourceTemplateId: saveOptions.sourceTemplateId || "",
+          isFavorite: false
+        });
+        if (remoteCreated) {
+          created = remoteCreated;
+        }
+      } catch (_error) {
+        // Keep local save behavior when API call fails.
+      }
 
       savedPrompts = [created, ...savedPrompts].slice(0, constants.SAVED_PROMPTS_MAX);
       activeSavedPromptId = created.id;
@@ -654,7 +967,7 @@
       }
     }
 
-    function handlePromptBrowserClick(event) {
+    async function handlePromptBrowserClick(event) {
       if (options.getBusy()) {
         return;
       }
@@ -703,7 +1016,9 @@
       }
 
       if (action === "save" && entry.source === "library") {
-        const created = savePromptToLibrary(entry.title, entry.prompt);
+        const created = await savePromptToLibrary(entry.title, entry.prompt, {
+          sourceTemplateId: entry.templateId
+        });
         if (created) {
           options.setStatus("Prompt saved.");
           renderPromptBrowser();
@@ -711,7 +1026,7 @@
       }
     }
 
-    function handleSavedPromptListClick(event) {
+    async function handleSavedPromptListClick(event) {
       if (options.getBusy()) {
         return;
       }
@@ -749,6 +1064,12 @@
           event.stopPropagation();
           const existing = savedPrompts.find((item) => item.id === promptId);
           if (existing && window.confirm(`Delete saved prompt "${existing.title}"?`)) {
+            try {
+              await deleteSavedPromptOnApi(promptId);
+            } catch (_error) {
+              options.setStatus("Could not delete prompt from server. Deleted locally.");
+            }
+
             savedPrompts = savedPrompts.filter((item) => item.id !== promptId);
             if (activeSavedPromptId === promptId) {
               activeSavedPromptId = "";
@@ -781,7 +1102,7 @@
       options.sidebar.closeSidebar();
     }
 
-    function handleSavedPromptDialogSubmit(event) {
+    async function handleSavedPromptDialogSubmit(event) {
       event.preventDefault();
 
       if (!savedPromptDialogState) {
@@ -814,6 +1135,16 @@
           return;
         }
 
+        try {
+          await updateSavedPromptOnApi(existing.id, {
+            title,
+            prompt,
+            isFavorite: false
+          });
+        } catch (_error) {
+          options.setStatus("Could not update prompt on server. Updated locally.");
+        }
+
         existing.title = title;
         existing.prompt = prompt;
         activeSavedPromptId = existing.id;
@@ -828,16 +1159,14 @@
         return;
       }
 
-      const created = {
-        id: createSavedPromptId(),
-        title,
-        prompt
-      };
+      const created = await savePromptToLibrary(title, prompt);
+      if (!created) {
+        options.setStatus("Could not save prompt.");
+        return;
+      }
 
-      savedPrompts = [created, ...savedPrompts].slice(0, constants.SAVED_PROMPTS_MAX);
       activeSavedPromptId = created.id;
       activePromptTemplateId = "";
-      saveSavedPrompts();
       renderSavedPromptList();
       renderPromptLibrary();
       refreshPromptBrowserIfOpen();
@@ -852,6 +1181,21 @@
       renderPromptLibrary();
       renderSavedPromptList();
       renderPromptBrowserCategoryChips();
+
+      void (async () => {
+        try {
+          await hydratePromptCatalogFromApi();
+          const remoteSaved = await fetchSavedPromptsFromApi();
+          if (Array.isArray(remoteSaved)) {
+            savedPrompts = remoteSaved.slice(0, constants.SAVED_PROMPTS_MAX);
+            saveSavedPrompts();
+            renderSavedPromptList();
+            refreshPromptBrowserIfOpen();
+          }
+        } catch (_error) {
+          // Keep local fallback behavior.
+        }
+      })();
 
       function openLibraryFromButton() {
         if (options.getBusy()) {

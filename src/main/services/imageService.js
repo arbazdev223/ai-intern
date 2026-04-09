@@ -27,7 +27,33 @@ function enhancePrompt(prompt) {
   if (!base) {
     return "";
   }
-  return `${base}. High detail, cinematic lighting, sharp focus.`;
+  return `${base}. Keep visuals clear, topic-accurate, and educational.`;
+}
+
+function buildUniversalImagePrompt(prompt, imageTypeValue) {
+  const base = normalizePrompt(prompt);
+  if (!base) {
+    return "";
+  }
+
+  const imageType = String(imageTypeValue || "auto").trim().toLowerCase();
+  const constraints = [
+    "STRICT: Match the requested topic exactly.",
+    "STRICT: Do not generate unrelated symbolic or random visuals.",
+    "Style: clean, minimal, labeled, educational."
+  ];
+
+  if (imageType === "flowchart") {
+    constraints.push("Use a step-by-step flowchart with arrows and labeled nodes.");
+  } else if (imageType === "comparison") {
+    constraints.push("Use a side-by-side comparison infographic with clear labels.");
+  } else if (imageType === "realistic") {
+    constraints.push("Use a realistic visual but keep topic labels clear and accurate.");
+  } else {
+    constraints.push("Use a clear explanatory diagram with labeled parts.");
+  }
+
+  return `${base}\n\n${constraints.join(" ")}`;
 }
 
 function resolveSize(value, modelName) {
@@ -121,10 +147,11 @@ function createImageService(options = {}) {
       throw new Error("Image prompt is empty");
     }
     const finalPrompt = enhance ? enhancePrompt(basePrompt) : basePrompt;
+    const promptWithGuardrails = buildUniversalImagePrompt(finalPrompt, optionsArg.imageType);
 
     const body = {
       model,
-      prompt: finalPrompt,
+      prompt: promptWithGuardrails,
       size,
       n: count
     };
@@ -176,6 +203,7 @@ function createImageService(options = {}) {
       urls,
       images: urls.map((url) => ({ url })),
       prompt: finalPrompt,
+      guardedPrompt: promptWithGuardrails,
       model,
       size,
       count

@@ -131,7 +131,7 @@
   min-width: 0;
   display: grid;
   gap: 6px;
-  width: min(100%, 760px);
+  width: min(80%, 980px);
 }
 
 .chat-message--user .message-body {
@@ -166,7 +166,7 @@
 .bubble,
 .chat-bubble {
   width: fit-content;
-  max-width: min(100%, 760px);
+  max-width: 100%;
   border-radius: 20px;
   padding: 14px 16px;
   font-size: 14px;
@@ -178,8 +178,27 @@
 
 .chat-message--assistant .chat-bubble,
 .message-row.assistant .bubble {
+  width: 100%;
   background: var(--assistant-bg);
   border-color: var(--assistant-border);
+}
+
+@media (min-width: 1100px) {
+  .chat-message--assistant,
+  .message-row.assistant {
+    justify-content: center;
+  }
+
+  .chat-message--assistant .message-rail,
+  .message-row.assistant .message-rail {
+    width: min(88%, 1220px);
+  }
+
+  .chat-message--assistant .message-body,
+  .message-row.assistant .message-body {
+    width: 100%;
+    max-width: none;
+  }
 }
 
 .chat-message--user .chat-bubble,

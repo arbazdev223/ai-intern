@@ -1,6 +1,5 @@
-const fs = require("fs");
-const path = require("path");
 const { app, ipcMain, screen } = require("electron");
+const { getEnv } = require("./config/env");
 const { createWindowManager } = require("./windowManager");
 const { createTrayManager } = require("./trayManager");
 const { createShortcutManager } = require("./shortcutManager");
@@ -11,48 +10,15 @@ const { createVoiceService } = require("./voiceService");
 const { createUpdateService } = require("./updateService");
 const { registerIpcHandlers } = require("./ipcHandlers");
 
-function loadEnvFile() {
-  const envPath = path.resolve(__dirname, "..", "..", ".env");
-  if (!fs.existsSync(envPath)) {
-    return;
-  }
+const startupEnv = getEnv();
 
-  const raw = fs.readFileSync(envPath, "utf8");
-  raw.split(/\r?\n/).forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      return;
-    }
-
-    const match = trimmed.match(/^([\w.-]+)\s*=\s*(.*)$/);
-    if (!match) {
-      return;
-    }
-
-    const key = match[1];
-    let value = match[2] || "";
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (!Object.prototype.hasOwnProperty.call(process.env, key)) {
-      process.env[key] = value;
-    }
-  });
-}
-
-loadEnvFile();
-
-if (!process.env.OPENAI_API_KEY && !process.env.GEMINI_API_KEY && !process.env.GPT_key) {
+if (!startupEnv.OPENAI_API_KEY && !startupEnv.GEMINI_API_KEY) {
   console.warn("[startup] No AI API key set. Configure OPENAI_API_KEY or GEMINI_API_KEY to enable AI.");
 }
 
 if (process.env.NODE_ENV === "development") {
   try {
-    require("electron-reload")(path.resolve(__dirname, "..", ".."), {
+    require("electron-reload")(require("path").resolve(__dirname, "..", ".."), {
       electron: process.execPath,
       hardResetMethod: "exit",
       awaitWriteFinish: {

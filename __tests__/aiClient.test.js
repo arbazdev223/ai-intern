@@ -91,16 +91,15 @@ describe("aiClient", () => {
     expect(result.provider).toBe("gemini");
   });
 
-  test("returns friendly message when no API keys are configured", async () => {
+  test("throws clear error when no API keys are configured", async () => {
     const client = createAiClient({
       getCurrentApp: () => "Test",
       searchService
     });
 
-    const result = await client.generate({ userPrompt: "Hello", rawPrompt: true });
-
-    expect(result.response).toBe("No AI API configured.");
-    expect(result.provider).toBe("unconfigured");
+    await expect(client.generate({ userPrompt: "Hello", rawPrompt: true })).rejects.toThrow(
+      "Missing OPENAI_API_KEY"
+    );
   });
 
   test("uses web search direct response for search-triggered queries", async () => {

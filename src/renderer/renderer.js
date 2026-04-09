@@ -37,11 +37,18 @@
       chatSearchInput: document.getElementById("chat-search"),
       clearAttachmentButton: document.getElementById("clearAttachmentButton"),
       closePromptBrowserButton: document.getElementById("closePromptBrowserButton"),
+      composerAttachFileBtn: document.getElementById("composerAttachFileBtn"),
+      composerPromptLibraryBtn: document.getElementById("composerPromptLibraryBtn"),
+      composerScreenshotBtn: document.getElementById("composerScreenshotBtn"),
+      composerToolsButton: document.getElementById("composerToolsButton"),
+      composerToolsMenu: document.getElementById("composerToolsMenu"),
+      composerToolsWrap: document.getElementById("composerToolsWrap"),
       conversationList: document.getElementById("conversationList"),
       detectedAppLabel: document.getElementById("detectedAppLabel"),
       expandButton: document.getElementById("expandButton"),
       externalScreenToggle: document.getElementById("externalScreenToggle"),
       externalScreenToggleLabel: document.getElementById("externalScreenToggleLabel"),
+      fileAttachInput: document.getElementById("fileAttachInput"),
       modelStatus: document.getElementById("modelStatus"),
       newChatButton: document.getElementById("newChatButton"),
       promptBrowserCards: document.getElementById("promptBrowserCards"),
@@ -79,10 +86,75 @@
       typingIndicator: document.getElementById("typingIndicator"),
       typingLabel: document.querySelector("#typingIndicator .typing-label"),
       voiceLivePreview: document.getElementById("voiceLivePreview"),
+      voiceOutputMode: document.getElementById("voiceOutputMode"),
+      voiceButton: document.getElementById("voiceButton"),
       voiceToggle: document.getElementById("voiceToggle"),
       voiceToggleLabel: document.getElementById("voiceToggleLabel"),
       voiceStatus: document.getElementById("voiceStatus")
     };
+  }
+
+  function initComposerTools(refs) {
+    if (!refs.composerToolsButton || !refs.composerToolsMenu || !refs.composerToolsWrap) {
+      return;
+    }
+
+    const openMenu = () => {
+      refs.composerToolsMenu.classList.remove("hidden");
+      refs.composerToolsButton.setAttribute("aria-expanded", "true");
+    };
+
+    const closeMenu = () => {
+      refs.composerToolsMenu.classList.add("hidden");
+      refs.composerToolsButton.setAttribute("aria-expanded", "false");
+    };
+
+    refs.composerToolsButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      const isOpen = !refs.composerToolsMenu.classList.contains("hidden");
+      if (isOpen) {
+        closeMenu();
+      } else {
+        openMenu();
+      }
+    });
+
+    if (refs.composerAttachFileBtn) {
+      refs.composerAttachFileBtn.addEventListener("click", () => {
+        closeMenu();
+        if (refs.fileAttachInput) {
+          refs.fileAttachInput.click();
+        }
+      });
+    }
+
+    if (refs.composerPromptLibraryBtn) {
+      refs.composerPromptLibraryBtn.addEventListener("click", () => {
+        closeMenu();
+        document.dispatchEvent(new CustomEvent("ifda:openPromptLibrary"));
+      });
+    }
+
+    if (refs.composerScreenshotBtn) {
+      refs.composerScreenshotBtn.addEventListener("click", () => {
+        closeMenu();
+        if (refs.screenshotButton) {
+          refs.screenshotButton.click();
+        }
+      });
+    }
+
+    document.addEventListener("click", (event) => {
+      if (!refs.composerToolsWrap.contains(event.target)) {
+        closeMenu();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    });
   }
 
   async function syncAppVersionLabel(refs) {
@@ -117,6 +189,7 @@
     const refs = getRefs();
     applyVoiceModeDisabledState(refs);
     void syncAppVersionLabel(refs);
+    initComposerTools(refs);
     if (!refs.chatMessages || !refs.chatForm || !refs.promptInput || !refs.sendButton || !refs.screenshotButton) {
       console.error("Required chat UI elements are missing.");
       return;

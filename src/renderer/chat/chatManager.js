@@ -12,6 +12,251 @@
     let longRequestTimer = null;
     let chatSearchQuery = "";
     let chatSearchDebounceTimer = null;
+    let mediaRecorder = null;
+    let mediaStream = null;
+    let isVoiceRecording = false;
+    let voiceTranscriptText = "";
+    let voiceInputPrefix = "";
+    let voiceChunks = [];
+    let voiceMimeType = "audio/webm";
+
+    function resolveVoiceLanguage() {
+      const inputText = String((refs.promptInput && refs.promptInput.value) || "").trim();
+      if (/[\u0900-\u097F]/.test(inputText)) {
+        return "hi-IN";
+      }
+
+      const browserLang = String((navigator && navigator.language) || "").toLowerCase();
+      if (browserLang.startsWith("hi")) {
+        return "hi-IN";
+      }
+
+      return "en-US";
+    }
+
+    function getVoiceOutputMode() {
+      const raw = String((refs.voiceOutputMode && refs.voiceOutputMode.value) || "auto").trim().toLowerCase();
+      if (raw === "hindi" || raw === "english") {
+        return raw;
+      }
+      return "auto";
+    }
+
+    function updateVoiceButtonUi() {
+      if (!refs.voiceButton) {
+        return;
+      }
+
+      refs.voiceButton.classList.toggle("is-recording", isVoiceRecording);
+      refs.voiceButton.setAttribute("aria-pressed", isVoiceRecording ? "true" : "false");
+      refs.voiceButton.setAttribute(
+        "aria-label",
+        isVoiceRecording ? "Stop voice input" : "Start voice input"
+      );
+      refs.voiceButton.title = isVoiceRecording ? "Stop voice input" : "Voice input";
+    }
+
+    function setVoiceRecordingState(nextState) {
+      isVoiceRecording = Boolean(nextState);
+      updateVoiceButtonUi();
+      if (!isVoiceRecording && refs.voiceLivePreview) {
+        refs.voiceLivePreview.classList.add("hidden");
+        refs.voiceLivePreview.textContent = "";
+      }
+    }
+
+    function releaseVoiceResources() {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (_error) {}
+        });
+      }
+
+      mediaStream = null;
+      mediaRecorder = null;
+    }
+
+    function resolveRecorderMimeType() {
+      if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+        return "audio/webm";
+      }
+
+      if (MediaRecorder.isTypeSupported("audio/webm")) {
+        return "audio/webm";
+      }
+
+      return "";
+    }
+
+    function applyVoiceTranscript(nextTranscript) {
+      if (!refs.promptInput) {
+        return;
+      }
+
+      voiceTranscriptText = String(nextTranscript || "").trim();
+      const composed = `${voiceInputPrefix} ${voiceTranscriptText}`.trim();
+      refs.promptInput.value = composed;
+      autoResizeInput();
+
+      if (refs.voiceLivePreview) {
+        if (voiceTranscriptText) {
+          refs.voiceLivePreview.textContent = `Listening: ${voiceTranscriptText}`;
+          refs.voiceLivePreview.classList.remove("hidden");
+        } else {
+          refs.voiceLivePreview.textContent = "";
+          refs.voiceLivePreview.classList.add("hidden");
+        }
+      }
+    }
+
+    function stopVoiceInput() {
+      if (!mediaRecorder || !isVoiceRecording) {
+        return;
+      }
+
+      try {
+        mediaRecorder.stop();
+      } catch (_error) {}
+      setVoiceRecordingState(false);
+      setStatus("Transcribing audio...", { busy: true });
+    }
+
+    async function startVoiceInput() {
+      if (isBusy || !refs.promptInput || refs.promptInput.disabled) {
+        return;
+      }
+
+      if (mediaRecorder) {
+        setStatus("Finishing previous recording...");
+        return;
+      }
+
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+        setStatus("Voice input is not supported in this environment.");
+        return;
+      }
+
+      const outputMode = getVoiceOutputMode();
+      const preferredMimeType = resolveRecorderMimeType();
+
+      voiceInputPrefix = String(refs.promptInput.value || "").trim();
+      voiceChunks = [];
+      applyVoiceTranscript("");
+
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = preferredMimeType
+          ? new MediaRecorder(mediaStream, { mimeType: preferredMimeType })
+          : new MediaRecorder(mediaStream);
+        voiceMimeType = String(mediaRecorder.mimeType || preferredMimeType || "audio/webm")
+          .split(";")[0]
+          .trim() || "audio/webm";
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (!event.data || event.data.size === 0) {
+            return;
+          }
+          voiceChunks.push(event.data);
+        };
+
+        mediaRecorder.onerror = (event) => {
+          console.error("Voice recorder error:", event);
+          setStatus("Voice input error.");
+          setVoiceRecordingState(false);
+          releaseVoiceResources();
+        };
+
+        mediaRecorder.onstop = async () => {
+          try {
+            const audioBlob = new Blob(voiceChunks, { type: voiceMimeType || "audio/webm" });
+            console.log("Blob type:", audioBlob.type, "size:", audioBlob.size);
+
+            const audioFile = typeof File !== "undefined"
+              ? new File([audioBlob], "speech.webm", { type: "audio/webm" })
+              : audioBlob;
+            console.log("File:", audioFile);
+
+            if (!audioFile || audioBlob.size === 0) {
+              console.error("Empty audio file");
+              setStatus("No audio captured. Please try again.");
+              return;
+            }
+
+            const response = await options.assistantAPI.transcribeSpeech({
+              file: audioFile,
+              languageCode:
+                outputMode === "hindi"
+                  ? "hi"
+                  : outputMode === "english"
+                    ? "en"
+                    : "",
+              outputMode
+            });
+            const transcript = String((response && response.text) || "").trim();
+            applyVoiceTranscript(transcript);
+            setStatus(transcript ? "Voice input ready." : "No speech detected.");
+          } catch (error) {
+            console.error("Voice transcription failed:", error);
+            setStatus("Voice transcription failed.");
+          } finally {
+            voiceChunks = [];
+            releaseVoiceResources();
+            setVoiceRecordingState(false);
+            if (refs.promptInput) {
+              refs.promptInput.focus();
+            }
+          }
+        };
+
+        mediaRecorder.start();
+        setVoiceRecordingState(true);
+        setStatus("Listening...", { busy: true });
+      } catch (error) {
+        console.error("Voice start error:", error);
+        setVoiceRecordingState(false);
+        releaseVoiceResources();
+        const message = String(error && error.name ? error.name : "").toLowerCase().includes("notallowed")
+          ? "Microphone permission denied."
+          : "Unable to start voice input.";
+        setStatus(message);
+      }
+    }
+
+    function handleVoiceButtonClick() {
+      if (isVoiceRecording) {
+        stopVoiceInput();
+        return;
+      }
+
+      startVoiceInput().catch((error) => {
+        console.error("Voice input start failed:", error);
+        setStatus("Unable to start voice input.");
+      });
+    }
+
+    function initVoiceInput() {
+      if (!refs.voiceButton || !refs.promptInput) {
+        return;
+      }
+
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.mediaDevices ||
+        typeof navigator.mediaDevices.getUserMedia !== "function" ||
+        typeof MediaRecorder === "undefined" ||
+        !options.assistantAPI ||
+        typeof options.assistantAPI.transcribeSpeech !== "function"
+      ) {
+        refs.voiceButton.classList.add("hidden");
+        return;
+      }
+
+      updateVoiceButtonUi();
+
+      refs.voiceButton.addEventListener("click", handleVoiceButtonClick);
+    }
 
     function loadExternalScreenConsent() {
       if (typeof localStorage === "undefined") {
@@ -127,6 +372,12 @@
       }
       if (refs.externalScreenToggle) {
         refs.externalScreenToggle.disabled = nextBusy;
+      }
+      if (refs.voiceButton) {
+        refs.voiceButton.disabled = nextBusy;
+      }
+      if (nextBusy && isVoiceRecording) {
+        stopVoiceInput();
       }
     }
 
@@ -682,6 +933,11 @@
 
       const userPrompt = String((refs.promptInput && refs.promptInput.value) || "").trim();
       let screenshotBase64 = options.attachments.getPendingScreenshotBase64();
+      const attachmentSource =
+        (options.attachments && typeof options.attachments.getPendingAttachmentSource === "function"
+          ? String(options.attachments.getPendingAttachmentSource() || "").trim().toLowerCase()
+          : "") || "";
+      const isFileAttachment = attachmentSource === "file";
 
       if (!userPrompt && !screenshotBase64) {
         return;
@@ -725,8 +981,12 @@
 
         let promptForRequest = userPrompt;
         if (screenshotBase64) {
-          const extractedText = await options.screenshotOCR.extractOcrText(screenshotBase64);
-          promptForRequest = options.screenshotOCR.buildPromptWithOcr(userPrompt, extractedText);
+          if (isFileAttachment) {
+            promptForRequest = userPrompt;
+          } else {
+            const extractedText = await options.screenshotOCR.extractOcrText(screenshotBase64);
+            promptForRequest = options.screenshotOCR.buildPromptWithOcr(userPrompt, extractedText);
+          }
         }
 
         let shouldShowTypingIndicator = true;
@@ -760,7 +1020,56 @@
           return patterns.some((pattern) => pattern.test(text));
         }
 
-        if (options.assistantAPI && typeof options.assistantAPI.classifyInputType === "function") {
+        function isLikelyImageEditRequest(promptText) {
+          const text = String(promptText || "").toLowerCase();
+          if (!text) {
+            return false;
+          }
+
+          const editVerbPatterns = [
+            /\badd\b/,
+            /\bremove\b/,
+            /\breplace\b/,
+            /\bedit\b/,
+            /\benhance\b/,
+            /\bupscale\b/,
+            /\bretouch\b/,
+            /\bmerge\b/,
+            /\bcombine\b/,
+            /\bmake\s+it\b/,
+            /\badd\s+kar\b/,
+            /\bkar\s+do\b/,
+            /\bhata\s+do\b/,
+            /\b4k\b/,
+            /\bhd\b/
+          ];
+
+          const analysisPatterns = [
+            /\bwhat\b/,
+            /\bwhy\b/,
+            /\bexplain\b/,
+            /\banalyze\b/,
+            /\banalysis\b/,
+            /\bkya\b/,
+            /\bkaise\b/
+          ];
+
+          const hasEditSignal = editVerbPatterns.some((pattern) => pattern.test(text));
+          const hasAnalysisSignal = analysisPatterns.some((pattern) => pattern.test(text));
+          return hasEditSignal && !hasAnalysisSignal;
+        }
+
+        const shouldForceImageGeneration =
+          Boolean(screenshotBase64) &&
+          isFileAttachment &&
+          isLikelyImageEditRequest(userPrompt);
+
+        if (shouldForceImageGeneration) {
+          imagePlaceholder = options.messageRenderer.renderImagePlaceholder("Generating image...");
+          placeholderInserted = true;
+          shouldShowTypingIndicator = false;
+          setStatus("Generating image...", { busy: true });
+        } else if (options.assistantAPI && typeof options.assistantAPI.classifyInputType === "function") {
           try {
             const result = await options.assistantAPI.classifyInputType({ userPrompt });
             const type = String((result && result.type) || "").trim().toLowerCase();
@@ -782,20 +1091,28 @@
         if (shouldShowTypingIndicator) {
           setTypingIndicator(true);
           setStatus(
-            screenshotBase64 ? "AI is analyzing your screen..." : "AI is thinking...",
+            screenshotBase64
+              ? isFileAttachment
+                ? "AI is analyzing your image..."
+                : "AI is analyzing your screen..."
+              : "AI is thinking...",
             { busy: true }
           );
         } else {
           setTypingIndicator(false);
         }
 
+        const allowExternalForRequest = isFileAttachment ? true : isExternalScreenAllowed();
+
         const response = await options.assistantAPI.sendPrompt({
           userPrompt: promptForRequest,
           screenshotBase64,
           contextMessages: getMemoryContext(),
           memorySummary: getMemorySummary(),
-          rawPrompt: Boolean(screenshotBase64),
-          allowExternalScreenshot: isExternalScreenAllowed()
+          rawPrompt: Boolean(screenshotBase64 && !isFileAttachment),
+          allowExternalScreenshot: allowExternalForRequest,
+          forceImageGeneration: shouldForceImageGeneration,
+          attachmentSource
         });
         responseReceived = true;
         if (imagePlaceholder) {
@@ -961,7 +1278,7 @@
         addMessageAndPersist("assistant", `Error: ${message}`);
         setModelStatus("Offline", "");
 
-        if (message.includes("No AI API configured")) {
+        if (message.includes("No AI API configured") || message.includes("Missing OPENAI_API_KEY")) {
           setStatus("AI API missing. Add OPENAI_API_KEY or GEMINI_API_KEY.");
         } else if (message.includes("External AI off")) {
           setStatus("External AI is off. Enable External AI to use screenshots.");
@@ -1088,6 +1405,8 @@
       if (refs.chatSearchInput) {
         refs.chatSearchInput.addEventListener("input", handleChatSearchInput);
       }
+
+      initVoiceInput();
 
       options.assistantAPI.onActiveApp((appName) => {
         setDetectedApp(appName);
