@@ -32,6 +32,15 @@ function extractOcrTextFromPrompt(promptText) {
   return text;
 }
 
+function normalizeSearchQuery(query) {
+  return String(query || "")
+    .replace(/\b(search|research|google|find|look\s*up|web\s*search)\b/gi, " ")
+    .replace(/\b(karke|karo|kijiye|krdo|batao|bataye|please|pls)\b/gi, " ")
+    .replace(/[?:]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function createToolService(options = {}) {
   const searchService = options.searchService || null;
   const { sanitizeUserInput } = require("../utils/sanitizer");
@@ -75,7 +84,8 @@ function createToolService(options = {}) {
       if (!searchService || typeof searchService.search !== "function") {
         throw new Error("Web search unavailable");
       }
-      const rawWeb = await searchService.search(userPrompt);
+      const safeQuery = normalizeSearchQuery(sanitizeSearchField(userPrompt, 240)) || sanitizeSearchField(userPrompt, 240);
+      const rawWeb = await searchService.search(safeQuery);
       // sanitize fields before using them
       const web = {
         summary: sanitizeSearchField(rawWeb && rawWeb.summary ? rawWeb.summary : "", 800),

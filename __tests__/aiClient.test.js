@@ -91,15 +91,16 @@ describe("aiClient", () => {
     expect(result.provider).toBe("gemini");
   });
 
-  test("throws clear error when no API keys are configured", async () => {
+  test("returns friendly message when no API keys are configured", async () => {
     const client = createAiClient({
       getCurrentApp: () => "Test",
       searchService
     });
 
-    await expect(client.generate({ userPrompt: "Hello", rawPrompt: true })).rejects.toThrow(
-      "Missing OPENAI_API_KEY"
-    );
+    const result = await client.generate({ userPrompt: "Hello", rawPrompt: true });
+
+    expect(result.provider).toBe("unconfigured");
+    expect(String(result.response || "")).toContain("OPENAI_API_KEY");
   });
 
   test("uses web search direct response for search-triggered queries", async () => {
@@ -270,5 +271,49 @@ describe("aiClient", () => {
     expect(result.response).toContain("reliable live headlines clear nahi mili");
     expect(result.response).not.toContain("### Sources");
     expect(result.response).not.toContain("example.com/local-news");
+  });
+
+  test("ambiguous diagram request asks for clarification instead of generating generic image", async () => {
+    process.env.OPENAI_API_KEY = "sk-test-1234567890";
+    mockOpenaiCreate.mockResolvedValue({
+      choices: [{ message: { content: "ok" } }]
+    });
+
+    const client = createAiClient({
+      getCurrentApp: () => "Test",
+      searchService
+    });
+
+    const result = await client.generate({ userPrompt: "generate diagram" });
+
+    expect(result.provider).toBe("clarification");
+    expect(String(result.response || "").toLowerCase()).toContain("diagram kis topic");
+  });
+
+  test("affirmative follow-up continues previous request instead of restarting", async () => {
+    process.env.OPENAI_API_KEY = "sk-test-1234567890";
+    mockOpenaiCreate.mockResolvedValue({
+      choices: [{ message: { content: "final answer" } }]
+    });
+
+    const client = createAiClient({
+      getCurrentApp: () => "Test",
+      searchService
+    });
+
+    await client.generate({
+      userPrompt: "yes",
+      rawPrompt: true,
+      contextMessages: [
+        { role: "user", content: "Find the final value of k." },
+        { role: "assistant", content: "Would you like to proceed with that calculation?" }
+      ]
+    });
+
+    expect(mockOpenaiCreate).toHaveBeenCalled();
+    const callArgs = mockOpenaiCreate.mock.calls[0]?.[0] || {};
+    const sent = JSON.stringify(callArgs);
+    expect(sent).toContain("Continue from the previous step");
+    expect(sent).toContain("Find the final value of k");
   });
 });

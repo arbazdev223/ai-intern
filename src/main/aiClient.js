@@ -11,9 +11,10 @@ const { createResponseService } = require("./services/responseService");
 const { createControlService } = require("./services/controlService");
 const { createFileService } = require("./services/fileService");
 const { createImageService } = require("./services/imageService");
+const mathService = require("./services/mathService");
 const LRUCache = require("./utils/lruCache");
 const { estimateTokens } = require("./utils/tokenUtils");
-const { getEnv, ensureAiProviderConfigured } = require("./config/env");
+const { getEnv, ensureEnvTemplateExists, getEnvFileHint } = require("./config/env");
 
 function createAiClient(options = {}) {
   const acronymStopWords = new Set(constants.ACRONYM_STOP_WORDS || []);
@@ -42,6 +43,20 @@ Your job:
 - Keep formatting clean and minimal.
 `.trim();
   let didWarnInvalidKey = false;
+  const debugAiTrace = String(process.env.DEBUG_AI_TRACE || "false").trim().toLowerCase() === "true";
+
+  function logAiDebug(message, payload) {
+    if (!debugAiTrace) {
+      return;
+    }
+
+    if (typeof payload === "undefined") {
+      console.info(`[ai] ${message}`);
+      return;
+    }
+
+    console.info(`[ai] ${message}`, payload);
+  }
 
   function isLikelyOpenAIKey(value) {
     const trimmed = String(value || "").trim();
@@ -95,6 +110,15 @@ Your job:
 
   let openAIClient = null;
   let geminiClient = null;
+
+  function isPackagedBuild() {
+    try {
+      const { app } = require("electron");
+      return Boolean(app && app.isPackaged);
+    } catch (_error) {
+      return false;
+    }
+  }
 
   // Initialize service adapters
   const modelService = createModelService();
@@ -444,6 +468,87 @@ Your job:
     return false;
   }
 
+  function isAffirmativeFollowUp(userPrompt) {
+    const text = String(userPrompt || "").trim().toLowerCase();
+    if (!text) {
+      return false;
+    }
+
+    if (text.length > 12) {
+      return false;
+    }
+
+    return /^(yes|yep|yeah|ok|okay|sure|haan|ha|haanji|ji|yup)\b/.test(text);
+  }
+
+  function buildAffirmativeContinuationPrompt(userPrompt, payload = {}) {
+    if (!isAffirmativeFollowUp(userPrompt)) {
+      return String(userPrompt || "");
+    }
+
+    const contextMessages = Array.isArray(payload.contextMessages) ? payload.contextMessages : [];
+    if (contextMessages.length === 0) {
+      return String(userPrompt || "");
+    }
+
+    const normalized = contextMessages
+      .map((msg) => ({
+        role: msg && msg.role === "assistant" ? "assistant" : "user",
+        content: String(msg && msg.content ? msg.content : "").trim()
+      }))
+      .filter((msg) => msg.content);
+
+    const lastAssistant = [...normalized].reverse().find((msg) => msg.role === "assistant");
+    const lastUser = [...normalized].reverse().find((msg) => msg.role === "user");
+
+    const assistantAskedToProceed =
+      lastAssistant &&
+      /\b(would you like|do you want|shall i|should i|want me to|proceed|continue|aage\b|aage\s+badhein)\b/i.test(
+        lastAssistant.content
+      );
+
+    if (!assistantAskedToProceed || !lastUser) {
+      return String(userPrompt || "");
+    }
+
+    return [
+      "Continue from the previous step.",
+      "Do not restart the conversation.",
+      "Give the final answer the user asked for.",
+      "",
+      "Original question/context:",
+      lastUser.content,
+      "",
+      "Previous assistant message:",
+      lastAssistant.content
+    ].join("\n");
+  }
+
+  function isAmbiguousDiagramRequest(userPrompt) {
+    const text = String(userPrompt || "").trim();
+    if (!text) {
+      return false;
+    }
+
+    const lower = text.toLowerCase();
+    const startsLikeDiagram =
+      /^(generate|create|make|draw|design)\s+(an?\s+)?(diagram|flowchart|chart|infographic|mind\s*map)\b/.test(lower) ||
+      /^(diagram|flowchart|chart|infographic|mind\s*map)\s+(generate|create|make|draw)\b/.test(lower);
+
+    if (!startsLikeDiagram) {
+      return false;
+    }
+
+    // If the user already provided a topic/context, it's not ambiguous.
+    const hasTopicSignal = /\b(of|for|about|on|showing|regarding|for\s+)\b/.test(lower) || lower.includes(":");
+    if (hasTopicSignal) {
+      return false;
+    }
+
+    // Very short prompts like "generate diagram" or "make flowchart" lack topic.
+    return text.length <= 32;
+  }
+
   function isDynamicRateQuery(userPrompt) {
     const text = String(userPrompt || "").toLowerCase();
     if (!text) {
@@ -731,21 +836,41 @@ Your job:
     }
 
     const deepMode = wantsDeepWebExplanation(userPrompt);
+    const wantsComparison =
+      /\b(comparison|compare|vs)\b/i.test(userPrompt) ||
+      /\bwith\s+comparison\b/i.test(userPrompt) ||
+      /\bcomparison\s+table\b/i.test(userPrompt);
 
     const synthesisPrompt = [
       "You are a smart teacher assistant explaining search findings to a student.",
       "Use only the provided facts/snippets. Do not invent events.",
       "Write in the same language as the user input. Do not mix languages.",
       "If snippets are generic (homepage/about text), say clearly that exact breaking details are limited.",
-      "Do not invent specific dates, attacks, statements, or locations unless explicitly present in the provided facts.",
+      "Do not invent specific dates, product versions, benchmark numbers, pricing, or feature claims unless explicitly present in the provided facts.",
+      "If a field (like Pricing, Model/version, Context length) is not explicitly stated in facts, write: Not specified.",
+      "If you mention a model/version (example: GPT-5.2, Claude Opus 4.6), it MUST be explicitly present in the facts. Otherwise, omit the version.",
+      "If you mention a price (example: $8/month), it MUST be explicitly present in the facts. Otherwise, write Not specified.",
+      wantsComparison
+        ? "User asked for comparison: return a concise markdown comparison table first, then 5-8 bullet takeaways."
+        : "",
+      wantsComparison
+        ? "Table columns: Tool, Best for, Strengths (from facts), Limitations (from facts), Pricing."
+        : "",
+      wantsComparison
+        ? "After the table, add a short section: 'Evidence' with 3-6 bullets mapping key claims to the provided sources (use source titles/domains; no new links)."
+        : "",
+      wantsComparison ? "Do not use emojis." : "Light emoji use is allowed for readability.",
       deepMode
-        ? "User asked for depth: give a detailed but simple explanation in 4 parts: simple answer, known context, 2-3 concrete examples from provided facts, and practical takeaway."
+        ? "User asked for depth: after the table, give a detailed but simple explanation in 4 parts: simple answer, known context, 3-5 concrete examples from provided facts, and practical takeaway."
         : "Keep it concise, natural, conversational, and easy to read.",
       deepMode
-        ? "Use short paragraphs or bullets for clarity, but avoid markdown headings."
-        : "Start with simple answer, then one short example, then optional extra detail.",
-      "Light emoji use is allowed for readability.",
-      "Do not use markdown headings or report format.",
+        ? wantsComparison
+          ? "Keep takeaways short and actionable. Avoid long paragraphs."
+          : "Use short paragraphs or bullets for clarity, but avoid markdown headings."
+        : wantsComparison
+          ? "Keep the table tight. Takeaways should be 3-6 bullets."
+          : "Start with simple answer, then one short example, then optional extra detail.",
+      wantsComparison ? "Headings are allowed only if user asked; otherwise keep it minimal." : "Do not use markdown headings or report format.",
       "Avoid report style formatting.",
       "If query is about real-world events, use safe phrasing like 'Based on recent reports' or 'As of latest available information'.",
       "",
@@ -753,11 +878,13 @@ Your job:
       "",
       "Search findings:",
       factsBlock
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 
     try {
       if (openAIEnabled) {
-        const model = modelService.getOpenAIModel();
+        const model = modelService.getOpenAIResearchModel
+          ? modelService.getOpenAIResearchModel()
+          : modelService.getOpenAIModel();
         const text = await modelService.callOpenAIChat({
           model,
           messages: [
@@ -767,7 +894,7 @@ Your job:
             },
             { role: "user", content: synthesisPrompt }
           ],
-          temperature: 0.2
+          temperature: wantsComparison ? 0.1 : 0.2
         });
         const safeText = String(text || "").trim();
         if (safeText) {
@@ -825,7 +952,9 @@ Your job:
 
     try {
       if (openAIEnabled) {
-        const model = modelService.getOpenAIModel();
+        const model = modelService.getOpenAIResearchModel
+          ? modelService.getOpenAIResearchModel()
+          : modelService.getOpenAIModel();
         const text = await modelService.callOpenAIChat({
           model,
           messages: [
@@ -1346,7 +1475,7 @@ Your job:
       return sourceText;
     }
 
-    console.log("[AI QUALITY FIX TRIGGERED]");
+    logAiDebug("quality-fix-triggered");
 
     const rewritePrompt = [
       "Rewrite the following response into a highly structured, detailed, and professional format.",
@@ -1425,6 +1554,96 @@ Your job:
     return outputTypes.length > 0 ? Array.from(new Set(outputTypes)) : ["html"];
   }
 
+  function detectRequestedFormatFromPrompt(userPrompt) {
+    const text = String(userPrompt || "").toLowerCase();
+    if (/\b(table|tabular|in\s+table\s+format)\b/.test(text)) {
+      return "table";
+    }
+    if (/\b(bullet|bullets|bullet\s+points?)\b/.test(text)) {
+      return "bullets";
+    }
+    if (/\b(list|in\s+list\s+format)\b/.test(text)) {
+      return "list";
+    }
+    return "auto";
+  }
+
+  function hasMarkdownTable(text) {
+    const source = String(text || "");
+    return /\|[^\n]+\|/.test(source);
+  }
+
+  function hasListStructure(text) {
+    const source = String(text || "");
+    return /^\s*(?:[-*]\s+|\d+\.\s+)/m.test(source);
+  }
+
+  function hasBulletOnlyStructure(text) {
+    const source = String(text || "");
+    const lines = source
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) {
+      return false;
+    }
+    return lines.every((line) => /^[-*]\s+/.test(line));
+  }
+
+  function hasStructuredExplanation(text) {
+    const source = String(text || "").trim();
+    if (!source) {
+      return false;
+    }
+
+    const headingLike = /(^|\n)([A-Za-z][^:\n]{2,40}:|\d+\.\s+)/m.test(source);
+    const bulletLike = /^\s*(?:[-*]\s+|\d+\.\s+)/m.test(source);
+    return source.length >= 120 && (headingLike || bulletLike);
+  }
+
+  function validateResponseAgainstRequest(responseText, optionsArg = {}) {
+    const response = String(responseText || "").trim();
+    const userPrompt = String(optionsArg.userPrompt || "").trim();
+    const plannerFormat = String(optionsArg.plannerFormat || "auto").trim().toLowerCase();
+    const plannerTask = String(optionsArg.plannerTask || "").trim().toLowerCase();
+    const normalizedIntent = String(optionsArg.normalizedIntent || "").trim().toLowerCase();
+    const hasImageOutput = Boolean(optionsArg.hasImageOutput);
+    const reasons = [];
+
+    const requestedFormat = plannerFormat !== "auto"
+      ? plannerFormat
+      : detectRequestedFormatFromPrompt(userPrompt);
+
+    if (requestedFormat === "table" && !hasMarkdownTable(response)) {
+      reasons.push("Expected markdown table output.");
+    }
+    if (requestedFormat === "list" && !hasListStructure(response)) {
+      reasons.push("Expected list output.");
+    }
+    if (requestedFormat === "bullets" && !hasBulletOnlyStructure(response)) {
+      reasons.push("Expected bullet-only output.");
+    }
+
+    const explainRequested =
+      plannerTask === "explain" ||
+      normalizedIntent === "explanation" ||
+      /\b(explain|how|why|samjha|samjhao)\b/i.test(userPrompt);
+    if (explainRequested && !hasStructuredExplanation(response)) {
+      reasons.push("Expected structured explanation output.");
+    }
+
+    const imageRequested = plannerTask === "image" || normalizedIntent === "image_generation";
+    if (imageRequested && !hasImageOutput) {
+      reasons.push("Expected image output for image request.");
+    }
+
+    return {
+      pass: reasons.length === 0,
+      reasons,
+      requestedFormat
+    };
+  }
+
   async function generateImageResponseFromPrompt(userPrompt, payload = {}, plannerPlan = null) {
     const openAIKey = getOpenAIKey();
     if (!openAIKey) {
@@ -1443,16 +1662,45 @@ Your job:
         typeof promptBuilder.buildImageGenerationPrompt === "function"
           ? promptBuilder.buildImageGenerationPrompt({ userInput: userPrompt, plan: plannerPlan || {} })
           : userPrompt;
-      const imageResult = await imageService.generateImage(generatedPrompt, {
+      const imageOptions = {
         size: payload.imageSize,
         enhance: payload.imageEnhance,
         count: payload.imageCount,
         imageType: String(plannerPlan && plannerPlan.image_type ? plannerPlan.image_type : "auto").trim().toLowerCase()
+      };
+      let imageResult = await imageService.generateImage(generatedPrompt, imageOptions);
+
+      let allUrls = Array.isArray(imageResult.urls) ? imageResult.urls : [];
+      let validation = validateResponseAgainstRequest("", {
+        userPrompt,
+        plannerTask: "image",
+        normalizedIntent: "image_generation",
+        hasImageOutput: allUrls.length > 0
       });
+      logAiDebug("validation-result", validation.pass ? "pass" : "fail");
+
+      if (!validation.pass) {
+        const correctedPrompt = [
+          generatedPrompt,
+          "",
+          "You gave incorrect output.",
+          "Fix it and strictly follow user request.",
+          "Return only the final valid image result."
+        ].join("\n");
+        imageResult = await imageService.generateImage(correctedPrompt, imageOptions);
+        allUrls = Array.isArray(imageResult.urls) ? imageResult.urls : [];
+        validation = validateResponseAgainstRequest("", {
+          userPrompt,
+          plannerTask: "image",
+          normalizedIntent: "image_generation",
+          hasImageOutput: allUrls.length > 0
+        });
+        logAiDebug("validation-result", validation.pass ? "pass" : "fail");
+      }
+
       const requestedCount = Number.isFinite(Number(payload.imageCount))
         ? Number(payload.imageCount)
         : 1;
-      const allUrls = Array.isArray(imageResult.urls) ? imageResult.urls : [];
       const limitedUrls = requestedCount > 1 ? allUrls : allUrls.slice(0, 1);
       const persistedUrls = await Promise.all(limitedUrls.map((url) => persistGeneratedImageUrl(url)));
       const finalUrls = persistedUrls.filter(Boolean);
@@ -1584,7 +1832,7 @@ Your job:
 
   async function generate(payload = {}) {
     const requestStartedAt = Date.now();
-    const userPrompt = String(payload.userPrompt || "").trim();
+    let userPrompt = String(payload.userPrompt || "").trim();
     const screenshotBase64 = String(payload.screenshotBase64 || "").trim();
     const allowExternalScreenshot = Boolean(payload.allowExternalScreenshot);
     const rawPrompt = Boolean(payload.rawPrompt);
@@ -1594,8 +1842,26 @@ Your job:
       throw new Error("Prompt is empty.");
     }
 
+    userPrompt = buildAffirmativeContinuationPrompt(userPrompt, payload);
+
+    try {
+      if (mathService && typeof mathService.canSolve === "function" && mathService.canSolve(userPrompt)) {
+        const solved = mathService.solve(userPrompt);
+        if (solved && solved.response) {
+          return {
+            response: String(solved.response),
+            usedModel: "local:math",
+            provider: "local:math",
+            currentApp: options.getCurrentApp(),
+            openAIEnabled: Boolean(getOpenAIClient()),
+            geminiEnabled: Boolean(getGeminiClient())
+          };
+        }
+      }
+    } catch (_error) {}
+
     if (forceImageGeneration) {
-      return generateImageResponseFromPrompt(userPrompt, payload, plannerPlan);
+      return generateImageResponseFromPrompt(userPrompt, payload, null);
     }
 
     function mapPlanTaskToConversationIntent(taskValue, fallbackIntent) {
@@ -1676,7 +1942,11 @@ Your job:
     if (!rawPrompt && !plannerPlan) {
       plannerPlan = await resolvePlannerPlan(userPrompt, plannerContext, plannerTimeoutMs);
     }
-    console.log("PLAN:", plannerPlan || { fallback: true });
+    logAiDebug("planner", {
+      task: plannerPlan && plannerPlan.task ? String(plannerPlan.task) : "fallback",
+      format: plannerPlan && plannerPlan.format ? String(plannerPlan.format) : "auto",
+      hasPlan: Boolean(plannerPlan)
+    });
 
     const legacyResponseMode =
       intentService && typeof intentService.detectResponseMode === "function"
@@ -1748,6 +2018,10 @@ Your job:
       ? plannerPlan.tools.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
       : [];
     const plannerFormat = String(plannerPlan && plannerPlan.format ? plannerPlan.format : "auto").trim().toLowerCase();
+    logAiDebug("format", {
+      format: plannerFormat || "auto",
+      promptLength: userPrompt.length
+    });
 
     if (!rawPrompt && plannerTask === "image") {
       return generateImageResponseFromPrompt(userPrompt, payload, plannerPlan);
@@ -1867,6 +2141,18 @@ Your job:
       };
     }
 
+    if (isAmbiguousDiagramRequest(userPrompt)) {
+      return {
+        response:
+          "Diagram kis topic ka banana hai? Example: \"flowchart of ATM withdrawal\", \"network diagram of LAN\", ya \"SDLC diagram\". Topic bata do, main exact diagram generate kar dunga.",
+        usedModel: "none",
+        provider: "clarification",
+        currentApp: options.getCurrentApp(),
+        openAIEnabled,
+        geminiEnabled
+      };
+    }
+
     const fileRequested = !rawPrompt && explicitFileRequest && normalizedIntent === "document_formatting";
     const plannerWantsImage = plannerTask === "image" || plannerTools.includes("image_gen");
     const shouldGenerateImage =
@@ -1911,13 +2197,13 @@ Your job:
             : "")
         : "";
 
-    console.info("[ai] request:start", {
+    logAiDebug("request:start", {
       hasScreenshot: Boolean(screenshotBase64),
       promptLength: userPrompt.length,
       allowExternalScreenshot
     });
 
-    console.log("Selected Tool:", selectedTool || "none");
+    logAiDebug("selected-tool", selectedTool || "none");
 
     let toolResult = "";
     let webSearchResult = null;
@@ -1955,8 +2241,10 @@ Your job:
       const sourceLines = currentEventsMode
         ? formatWebSources(webSearchResult, 8, { requireHttpUrl: true })
         : formatWebSources(webSearchResult, 5);
-      const responseWithSources =
-        synthesizedText;
+      const sourcesBlock = !isNoReliableHeadline && sourceLines && sourceLines.length
+        ? `\n\nSources:\n${sourceLines.join("\n")}`
+        : "";
+      const responseWithSources = `${synthesizedText}${sourcesBlock}`.trim();
 
       return {
         response: responseWithSources || buildWebSearchDirectResponse(webSearchResult, userPrompt),
@@ -1992,19 +2280,18 @@ Your job:
     const selectedSpecialPrompt = extractPromptSection(finalPromptBase, "SELECTED SPECIAL PROMPT");
     const masterSystemPrompt = extractPromptSection(finalPromptBase, "MASTER SYSTEM PROMPT");
 
-    console.info("[ai] prompt:routing", {
+    logAiDebug("prompt:routing", {
       conversationIntent,
       responseMode,
       language,
       tone,
       normalizedIntent,
       plannerTask,
-      selectedPromptKey: selectedPrompt.key || "default",
-      selectedPromptPreview: String(selectedPrompt.promptText || "").slice(0, 160)
+      selectedPromptKey: selectedPrompt.key || "default"
     });
-    console.info("[ai] prompt:final-system", {
-      masterSystemPrompt: masterSystemPrompt.slice(0, 400),
-      selectedSpecialPrompt: selectedSpecialPrompt.slice(0, 400)
+    logAiDebug("prompt:final-system", {
+      masterSystemLength: masterSystemPrompt.length,
+      specialPromptLength: selectedSpecialPrompt.length
     });
 
     const expectsLongResponse =
@@ -2030,7 +2317,40 @@ Your job:
     }
 
     if (!openAIEnabled && !geminiEnabled) {
-      ensureAiProviderConfigured();
+      // In production builds we should not ask end-users to configure API keys.
+      // Keys should be provided via a backend/proxy, or configured by an admin.
+      const packaged = isPackagedBuild();
+
+      const hintPath =
+        !packaged && typeof ensureEnvTemplateExists === "function"
+          ? ensureEnvTemplateExists()
+          : !packaged && typeof getEnvFileHint === "function"
+            ? getEnvFileHint()
+            : "";
+
+      const instructions = packaged
+        ? [
+            "AI service abhi available nahi hai.",
+            "Please IFDA support se contact karein.",
+            "App restart karke phir try karein."
+          ].join("\n")
+        : [
+            "AI API key configured nahi hai.",
+            "OPENAI_API_KEY ya GEMINI_API_KEY set karein.",
+            hintPath ? `Config file: ${hintPath}` : "",
+            "App restart karke phir try karein."
+          ]
+            .filter(Boolean)
+            .join("\n");
+
+      return {
+        response: instructions,
+        usedModel: "",
+        currentApp: options.getCurrentApp(),
+        provider: "unconfigured",
+        openAIEnabled,
+        geminiEnabled
+      };
     }
 
     try {
@@ -2063,26 +2383,33 @@ Your job:
         response: qualityCheckedResponse
       };
 
-      const requiresTableFormat = plannerFormat === "table";
-      const hasMarkdownTable = /\|[^\n]+\|/.test(String(normalizedResponsePayload.response || ""));
-      if (requiresTableFormat && !hasMarkdownTable) {
-        const tableRetryPrompt = [
+      let validation = validateResponseAgainstRequest(normalizedResponsePayload.response, {
+        userPrompt,
+        plannerFormat,
+        plannerTask,
+        normalizedIntent
+      });
+      logAiDebug("validation-result", validation.pass ? "pass" : "fail");
+
+      if (!validation.pass) {
+        const retryPrompt = [
           finalPrompt,
           "",
-          "IMPORTANT RETRY INSTRUCTION:",
-          "- User requested table format.",
-          "- Respond ONLY with a markdown table.",
-          "- No paragraphs or extra explanation outside the table.",
-          "- Include header and at least one data row."
+          "VALIDATION FAILED. You gave incorrect output.",
+          "Fix it and strictly follow user request.",
+          validation.reasons.length > 0
+            ? `Validation reasons: ${validation.reasons.join(" | ")}`
+            : "Validation reasons: output did not match requested intent/format.",
+          "Return only the corrected final answer."
         ].join("\n");
 
         try {
           const retryPayload = await controlService.request({
-            finalPrompt: tableRetryPrompt,
+            finalPrompt: retryPrompt,
             screenshotBase64,
             rawPrompt,
             userPrompt,
-            intentKey: `${cacheIntentKey}:table-retry`,
+            intentKey: `${cacheIntentKey}:self-correct-retry`,
             inputType: "teaching",
             systemPrompt: "",
             openAIEnabled,
@@ -2091,7 +2418,15 @@ Your job:
           });
 
           const retryText = String(retryPayload && retryPayload.response ? retryPayload.response : "").trim();
-          if (/\|[^\n]+\|/.test(retryText)) {
+          const retryValidation = validateResponseAgainstRequest(retryText, {
+            userPrompt,
+            plannerFormat,
+            plannerTask,
+            normalizedIntent
+          });
+          logAiDebug("validation-result", retryValidation.pass ? "pass" : "fail");
+
+          if (retryText) {
             normalizedResponsePayload.response = retryText;
             normalizedResponsePayload.usedModel = retryPayload.usedModel || normalizedResponsePayload.usedModel;
             normalizedResponsePayload.provider = retryPayload.provider || normalizedResponsePayload.provider;
@@ -2099,7 +2434,7 @@ Your job:
         } catch (_error) {}
       }
 
-      console.info("[ai] request:end", {
+      logAiDebug("request:end", {
         durationMs: Date.now() - requestStartedAt,
         usedModel: normalizedResponsePayload.usedModel || "unknown"
       });

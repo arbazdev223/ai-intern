@@ -205,8 +205,21 @@
               placeholder="Ask IFDA AI Tutor..."
               aria-label="Message input"
             ></textarea>
+            <div id="voiceWaveWrap" class="voice-wave-wrap hidden" aria-hidden="true">
+              <canvas id="voiceWaveCanvas" class="voice-wave-canvas" width="160" height="26"></canvas>
+              <button id="voiceCancelButton" type="button" class="voice-stop-btn voice-cancel-btn" aria-label="Cancel recording" title="Cancel">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="16" height="16" aria-hidden="true">
+                  <path d="M18 6L6 18M6 6l12 12"></path>
+                </svg>
+              </button>
+              <button id="voiceStopButton" type="button" class="voice-stop-btn voice-submit-btn" aria-label="Finish recording" title="Done">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" width="16" height="16" aria-hidden="true">
+                  <path d="M20 6L9 17l-5-5"></path>
+                </svg>
+              </button>
+            </div>
             <button id="voiceButton" type="button" class="voice-btn" aria-label="Start voice input" title="Voice input" aria-pressed="false">
-              <span aria-hidden="true">🎤</span>
+              <img src="public/mic.png" alt="" aria-hidden="true" />
             </button>
             <button id="sendButton" type="submit" class="send-btn" aria-label="Send message">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
@@ -356,6 +369,7 @@
     <script defer src="./src/shared/promptBuilder.js"></script>
     <script defer src="./src/renderer/chat/sessionStore.js"></script>
     <script defer src="./src/renderer/ui/sidebar.js"></script>
+    <script defer src="./src/renderer/ui/legacyModals.js"></script>
     <script defer src="./src/renderer/ui/promptLibrary.js"></script>
     <script defer src="./src/renderer/features/screenshotOCR.js"></script>
     <script defer src="./src/renderer/features/attachments.js"></script>
@@ -368,331 +382,6 @@
       crossorigin="anonymous"
     ></script>
     <script src="./public/highlight-fallback.js"></script>
-
-    <script>
-    /* ── IFDA AI — UI Init & Modal Logic ─────────────────── */
-    document.addEventListener('DOMContentLoaded', function () {
-    (function () {
-      "use strict";
-
-      /* ── Empty-state observer ─────────────────────────── */
-      var chatMessages = document.getElementById("chatMessages");
-      var emptyState   = document.getElementById("nEmptyState");
-      var typingEl     = document.getElementById("typingIndicator");
-
-      function updateEmptyState() {
-        if (!chatMessages || !emptyState) return;
-        var msgCount = 0;
-        for (var i = 0; i < chatMessages.children.length; i++) {
-          var child = chatMessages.children[i];
-          if (child !== emptyState && child !== typingEl) { msgCount++; }
-        }
-        if (msgCount === 0) {
-          emptyState.style.display = "";
-        } else {
-          emptyState.style.display = "none";
-        }
-      }
-
-      if (chatMessages && emptyState) {
-        updateEmptyState();
-        new MutationObserver(updateEmptyState).observe(chatMessages, { childList: true });
-      }
-
-      /* ── Auto-resize textarea ─────────────────────────── */
-      var promptInput = document.getElementById("promptInput");
-      if (promptInput) {
-        promptInput.addEventListener("input", function () {
-          this.style.height = "auto";
-          this.style.height = Math.min(this.scrollHeight, 160) + "px";
-        });
-        promptInput.addEventListener("keydown", function (e) {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            var form = document.getElementById("chatForm");
-            if (form) form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-          }
-        });
-      }
-
-      /* ── Modal helpers ────────────────────────────────── */
-      function openModal(id) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        el.classList.remove("hidden");
-        el.setAttribute("aria-hidden", "false");
-        var first = el.querySelector("button, input, textarea");
-        if (first) setTimeout(function () { first.focus(); }, 60);
-      }
-      function closeModal(id) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        el.classList.add("hidden");
-        el.setAttribute("aria-hidden", "true");
-      }
-
-      /* Close on backdrop click */
-      document.querySelectorAll(".ifda-modal-backdrop").forEach(function (backdrop) {
-        backdrop.addEventListener("click", function (e) {
-          if (e.target === backdrop) closeModal(backdrop.id);
-        });
-      });
-      /* Close on Escape */
-      document.addEventListener("keydown", function (e) {
-        if (e.key !== "Escape") return;
-        document.querySelectorAll(".ifda-modal-backdrop:not(.hidden)").forEach(function (m) {
-          closeModal(m.id);
-        });
-      });
-
-      /* ── Asked Questions ──────────────────────────────── */
-      var aqModalClose = document.getElementById("aqModalClose");
-      if (aqModalClose) aqModalClose.addEventListener("click", function () { closeModal("askedQuestionsModal"); });
-
-      var askedQBtn = document.getElementById("askedQuestionsBtn");
-      if (askedQBtn) {
-        askedQBtn.addEventListener("click", function () { openModal("askedQuestionsModal"); });
-        // debug: show how many stored sessions exist when opening
-        askedQBtn.addEventListener("click", function () {
-          try {
-            var CHAT_KEY = (window.SharedModules && window.SharedModules.constants && window.SharedModules.constants.CHAT_STORAGE_KEY) || "ai-intern-chat-sessions-v2";
-            var raw = localStorage.getItem(CHAT_KEY) || "";
-            var parsed = raw ? JSON.parse(raw) : null;
-            var sessions = Array.isArray(parsed) ? parsed : (parsed && parsed.sessions) || [];
-            console.log('Asked Questions opened — sessions count:', (sessions && sessions.length) || 0);
-            var t = document.createElement('div');
-            t.className = 'ifda-toast';
-            t.textContent = 'Asked Questions — saved chats: ' + ((sessions && sessions.length) || 0);
-            t.style.position = 'fixed'; t.style.right = '16px'; t.style.top = '120px'; t.style.zIndex = 99999; t.style.background = 'rgba(2,6,23,0.9)'; t.style.color = '#fff'; t.style.padding = '8px 12px'; t.style.borderRadius = '8px';
-            document.body.appendChild(t);
-            setTimeout(function () { try { t.remove(); } catch (e) {} }, 1800);
-          } catch (e) { console.error('Asked Questions debug failed', e); }
-        });
-      }
-
-      var aqInput   = document.getElementById("aqInput");
-      var aqAskBtn  = document.getElementById("aqAskBtn");
-      var aqHistory = document.getElementById("aqHistory");
-
-      function aqAsk() {
-        var q = (aqInput ? aqInput.value : "").trim();
-        if (!q) return;
-        var prevEmpty = aqHistory ? aqHistory.querySelector(".ifda-modal-empty") : null;
-        if (prevEmpty) prevEmpty.remove();
-
-        var item = document.createElement("div");
-        item.className = "aq-item";
-        item.innerHTML =
-          '<span class="aq-item-text">' + q.replace(/</g, "&lt;") + "</span>" +
-          '<button type="button" class="aq-copy-btn" title="Copy to clipboard">⧉</button>';
-        item.querySelector(".aq-copy-btn").addEventListener("click", function () {
-          navigator.clipboard.writeText(q).catch(function () {});
-          var btn = this; btn.textContent = "✓";
-          setTimeout(function () { btn.textContent = "⧉"; }, 1500);
-        });
-        item.querySelector(".aq-item-text").addEventListener("click", function () {
-          closeModal("askedQuestionsModal");
-          if (promptInput) { promptInput.value = q; promptInput.focus(); }
-        });
-        if (aqHistory) { aqHistory.appendChild(item); aqHistory.scrollTop = aqHistory.scrollHeight; }
-        if (aqInput) aqInput.value = "";
-      }
-
-      if (aqAskBtn) aqAskBtn.addEventListener("click", aqAsk);
-      if (aqInput)  aqInput.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); aqAsk(); } });
-
-      /* ── Course Help ──────────────────────────────────── */
-      var chModalClose   = document.getElementById("chModalClose");
-      var chModalCancel  = document.getElementById("chModalCancel");
-      var courseHelpBtn  = document.getElementById("courseHelpBtn");
-      if (chModalClose)  chModalClose.addEventListener("click",  function () { closeModal("courseHelpModal"); });
-      if (chModalCancel) chModalCancel.addEventListener("click", function () { closeModal("courseHelpModal"); });
-      if (courseHelpBtn) courseHelpBtn.addEventListener("click", function () { openModal("courseHelpModal"); });
-
-      var chInput   = document.getElementById("chInput");
-      var chAskBtn  = document.getElementById("chAskBtn");
-      var chHistory = document.getElementById("chHistory");
-
-      if (chAskBtn) {
-        chAskBtn.addEventListener("click", function () {
-          var q = (chInput ? chInput.value : "").trim();
-          if (!q) return;
-          var prevEmpty = chHistory ? chHistory.querySelector(".ifda-modal-empty") : null;
-          if (prevEmpty) prevEmpty.remove();
-
-          var item = document.createElement("div");
-          item.className = "ch-item";
-          item.innerHTML =
-            '<p class="ch-question">' + q.replace(/</g, "&lt;") + "</p>" +
-            '<p class="ch-answer">Routing to IFDA AI&hellip;</p>';
-          if (chHistory) { chHistory.appendChild(item); chHistory.scrollTop = chHistory.scrollHeight; }
-          if (chInput)  chInput.value = "";
-          closeModal("courseHelpModal");
-          if (promptInput) {
-            promptInput.value = q;
-            var form = document.getElementById("chatForm");
-            if (form) form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-          }
-        });
-      }
-
-      /* ── Tools / Mobile Menu ──────────────────────────── */
-      var mobileMenuBtn       = document.getElementById("mobileMenuBtn");
-      var mobileMenuClose     = document.getElementById("mobileMenuClose");
-      var mobileMenuCloseBtn  = document.getElementById("mobileMenuCloseBtn");
-      if (mobileMenuBtn)      mobileMenuBtn.addEventListener("click",      function () { openModal("mobileMenuModal"); });
-      if (mobileMenuClose)    mobileMenuClose.addEventListener("click",    function () { closeModal("mobileMenuModal"); });
-      if (mobileMenuCloseBtn) mobileMenuCloseBtn.addEventListener("click", function () { closeModal("mobileMenuModal"); });
-
-      /* Menu → course help */
-      var menuCourseHelpBtn = document.getElementById("menuCourseHelpBtn");
-      if (menuCourseHelpBtn) menuCourseHelpBtn.addEventListener("click", function () {
-        closeModal("mobileMenuModal");
-        openModal("courseHelpModal");
-      });
-      /* Menu → asked questions */
-      var menuAskedQuestionsBtn = document.getElementById("menuAskedQuestionsBtn");
-      if (menuAskedQuestionsBtn) menuAskedQuestionsBtn.addEventListener("click", function () {
-        closeModal("mobileMenuModal");
-        openModal("askedQuestionsModal");
-      });
-      /* Menu → prompt library (open browser panel) */
-      var menuPromptLibraryBtn = document.getElementById("menuPromptLibraryBtn");
-      if (menuPromptLibraryBtn) menuPromptLibraryBtn.addEventListener("click", function () {
-        closeModal("mobileMenuModal");
-        document.dispatchEvent(new CustomEvent("ifda:openPromptLibrary"));
-      });
-
-      /* ── Sidebar Prompt Library card ─────────────────── */
-      var plDesktopBtn = document.getElementById("promptLibraryDesktopBtn");
-      if (plDesktopBtn) {
-        plDesktopBtn.addEventListener("click", function () {
-          document.dispatchEvent(new CustomEvent("ifda:openPromptLibrary"));
-        });
-      }
-
-      /* ── New Chat behaviour: clear messages and show empty hero ───────────────── */
-      var newChatButton = document.getElementById("newChatButton");
-      if (newChatButton) {
-        newChatButton.addEventListener("click", function () {
-          var cm = document.getElementById("chatMessages");
-          var empty = document.getElementById("nEmptyState");
-          var typing = document.getElementById("typingIndicator");
-          // remove all message nodes except empty state and typing indicator
-          if (cm) {
-            Array.from(cm.children).forEach(function (ch) {
-              if (ch !== empty && ch !== typing) ch.remove();
-            });
-            // ensure empty state is visible
-            if (empty) {
-              empty.style.display = "";
-              empty.setAttribute("aria-hidden", "false");
-            }
-            // hide typing
-            if (typing) {
-              typing.classList.add("hidden");
-              typing.setAttribute("aria-hidden", "true");
-            }
-            // close prompt browser panel if open
-            var panel = document.getElementById("promptBrowserPanel");
-            if (panel) panel.classList.add("hidden");
-            // focus input for quick start
-            var input = document.getElementById("promptInput");
-            if (input) { input.value = ""; input.focus(); input.style.height = "auto"; }
-          }
-        });
-      }
-
-        /* ── Asked Questions: load searchable chat history ───────────────── */
-        (function () {
-          var CHAT_KEY = (window.SharedModules && window.SharedModules.constants && window.SharedModules.constants.CHAT_STORAGE_KEY) || "ai-intern-chat-sessions-v2";
-          var aqModal = document.getElementById("askedQuestionsModal");
-          var aqList = document.getElementById("aqList");
-          var aqSearch = document.getElementById("aqSearch");
-
-          function loadSessions() {
-            try {
-              var raw = localStorage.getItem(CHAT_KEY) || "";
-              if (!raw) return [];
-              var parsed = JSON.parse(raw);
-              var sessions = Array.isArray(parsed) ? parsed : (parsed && parsed.sessions) || [];
-              return sessions || [];
-            } catch (e) { return []; }
-          }
-
-          function renderList(filter) {
-            var sessions = loadSessions();
-            if (!aqList) return;
-            aqList.innerHTML = "";
-            if (!sessions || sessions.length === 0) {
-              aqList.innerHTML = '<p class="ifda-modal-empty">No past chats found</p>';
-              return;
-            }
-            var q = String(filter || "").trim().toLowerCase();
-            sessions.forEach(function (s) {
-              try {
-                var title = String(s.title || "").trim() || "Untitled";
-                var created = new Date(Number(s.createdAt || Date.now()));
-                var preview = "";
-                if (Array.isArray(s.recentMessages) && s.recentMessages.length) {
-                  preview = s.recentMessages.map(function (m) { return (m && m.content) || ""; }).join(" — ");
-                } else if (Array.isArray(s.messages) && s.messages.length) {
-                  preview = s.messages.slice(-3).map(function (m) { return m.content || ""; }).join(" — ");
-                }
-                var match = !q || title.toLowerCase().indexOf(q) !== -1 || preview.toLowerCase().indexOf(q) !== -1;
-                if (!match) return;
-                var item = document.createElement("div");
-                item.className = "aq-item";
-                item.style.cursor = "pointer";
-                item.innerHTML = '<div style="flex:1"><strong style="display:block">' + title.replace(/</g, "&lt;") + '</strong><small style="color:var(--muted);">' + created.toLocaleString() + '</small><div style="margin-top:6px;color:var(--muted);font-size:13px;">' + (preview ? preview.replace(/</g, "&lt;") : '&mdash;') + '</div></div>' + '<div style="margin-left:8px;flex-shrink:0"><button class="aq-copy-btn" title="Copy">Copy</button></div>';
-                // click → paste conversation to input
-                item.addEventListener("click", function (e) {
-                  var input = document.getElementById("promptInput");
-                  if (input) {
-                    var text = (title + "\n\n") + (preview || "");
-                    input.value = text;
-                    input.focus();
-                  }
-                  // close modal
-                  if (aqModal) aqModal.classList.add("hidden");
-                  e.stopPropagation();
-                });
-                // copy button
-                var copyBtn = item.querySelector(".aq-copy-btn");
-                if (copyBtn) {
-                  copyBtn.addEventListener("click", function (ev) {
-                    ev.stopPropagation();
-                    var toCopy = title + "\n\n" + (preview || "");
-                    navigator.clipboard.writeText(toCopy).then(function () {
-                      copyBtn.textContent = "✓";
-                      setTimeout(function () { copyBtn.textContent = "Copy"; }, 1200);
-                    }).catch(function () {});
-                  });
-                }
-                aqList.appendChild(item);
-              } catch (err) {}
-            });
-            if (!aqList.firstChild) {
-              aqList.innerHTML = '<p class="ifda-modal-empty">No chats match your search</p>';
-            }
-          }
-
-          if (aqSearch) {
-            aqSearch.addEventListener("input", function () { renderList(aqSearch.value); });
-          }
-
-          // open handler: when modal opens, render list
-          var aqOpenBtn = document.getElementById("askedQuestionsBtn");
-          if (aqOpenBtn) {
-            aqOpenBtn.addEventListener("click", function () {
-              setTimeout(function () { renderList(""); if (aqSearch) { aqSearch.value = ""; aqSearch.focus(); } }, 80);
-            });
-          }
-        })();
-
-    })();
-    });
-    </script>
 
   </body>
 </html>

@@ -334,7 +334,20 @@ function createIntentService(modelService) {
     const followUpDeepPattern = /\b(explain\s+more|deep\s+explain|deep\s+karo|aur\s+detail|detail\s+me|aur\s+samjhao|thoda\s+aur)\b/.test(input);
     const followUpShort = isFollowUpShort(input);
     const detectedFormat = detectRequestedFormat(input);
-    const shouldBeShort = words.length <= 6 || simpleFactPattern;
+    // Don't force "short" for actual questions; users often ask short questions but expect full explanations.
+    const hasQuestionSignal =
+      /\?/.test(input) ||
+      /\b(what|why|how|who|when|where|which)\b/.test(input) ||
+      /\b(kya|kaise|kyu|kyon|kab|kahan|kaun|kis|kon)\b/.test(input);
+    const asksForDetail =
+      /\b(detail|details|detail\s+me|explain|samjhao|elaborate|step\s*by\s*step)\b/.test(input);
+
+    const shouldBeShort =
+      !hasQuestionSignal &&
+      !asksForDetail &&
+      !hasRecencySignal &&
+      !hasExplicitSearchSignal &&
+      (words.length <= 4 || simpleFactPattern);
     const contextTopic = inferTopicFromContext(contextText);
     const comparisonContextTopic = extractComparisonTopicFromContext(contextText);
 
@@ -387,9 +400,8 @@ function createIntentService(modelService) {
       next.topic = contextTopic;
     }
 
-    if (detectedFormat !== "auto") {
-      next.format = detectedFormat;
-    }
+    // Format must be derived only from current input; never carry from previous turns.
+    next.format = detectedFormat;
 
     if (next.task === "image") {
       const detectedImageType = detectRequestedImageType(input, next.topic, next.subtask);
@@ -477,9 +489,8 @@ function createIntentService(modelService) {
       const normalized = enforcePlannerGuards(userInput, previousContext, normalizePlannerPlan(parsed));
       if (normalized) {
         const requestedFormat = detectRequestedFormat(userInput);
-        if (requestedFormat !== "auto") {
-          normalized.format = requestedFormat;
-        }
+        // Strictly pin format to current input every request.
+        normalized.format = requestedFormat;
         if (normalized.task === "image") {
           const requestedImageType = detectRequestedImageType(userInput, normalized.topic, normalized.subtask);
           if (!normalized.image_type || normalized.image_type === "auto") {

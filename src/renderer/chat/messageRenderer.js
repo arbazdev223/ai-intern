@@ -563,7 +563,7 @@
       placeholder.appendChild(frame);
 
       if (meta) {
-        meta.appendChild(createAssistantActions(() => content.textContent));
+        meta.appendChild(createAssistantActions(() => content.textContent, () => bubble.innerHTML, () => []));
       }
       bubble.appendChild(content);
       bubble.appendChild(placeholder);
@@ -845,6 +845,209 @@
       }, durationMs);
     }
 
+    function extractSourcesBlock(text) {
+      const source = String(text || "");
+      if (!source) {
+        return { cleanText: "", sources: [] };
+      }
+
+      const lines = source.split(/\r?\n/);
+      const startIndex = lines.findIndex((line) => /^\s*Sources\s*:?\s*$/i.test(String(line || "").trim()));
+      if (startIndex === -1) {
+        return { cleanText: source, sources: [] };
+      }
+
+      const sources = [];
+      let endIndex = startIndex + 1;
+
+      for (let i = startIndex + 1; i < lines.length; i += 1) {
+        const rawLine = String(lines[i] || "");
+        const trimmed = rawLine.trim();
+        if (!trimmed) {
+          endIndex = i + 1;
+          continue;
+        }
+
+        // Stop on next section heading.
+        if (/^#{1,6}\s+\S+/.test(trimmed)) {
+          break;
+        }
+
+        const mdLink = trimmed.match(/^\s*[-*]\s*\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)\s*$/);
+        if (mdLink) {
+          sources.push({ title: mdLink[1].trim(), url: mdLink[2].trim() });
+          endIndex = i + 1;
+          continue;
+        }
+
+        // Allow bare URLs too.
+        const bareUrl = trimmed.match(/^\s*[-*]?\s*(https?:\/\/\S+)\s*$/);
+        if (bareUrl) {
+          sources.push({ title: bareUrl[1].trim(), url: bareUrl[1].trim() });
+          endIndex = i + 1;
+          continue;
+        }
+
+        // If it's not a list item or link, stop parsing to avoid eating the rest of the answer.
+        break;
+      }
+
+      const cleanLines = [...lines.slice(0, startIndex), ...lines.slice(endIndex)];
+      return {
+        cleanText: cleanLines.join("\n").trim(),
+        sources
+      };
+    }
+
+    function normalizeHttpUrl(value) {
+      const url = String(value || "").trim();
+      if (!/^https?:\/\//i.test(url)) {
+        return "";
+      }
+      return url;
+    }
+
+    function ensureSourcesPanel() {
+      const existing = document.getElementById("sourcesPanelBackdrop");
+      if (existing) {
+        return existing;
+      }
+
+      const backdrop = document.createElement("div");
+      backdrop.id = "sourcesPanelBackdrop";
+      backdrop.className = "sources-panel-backdrop hidden";
+
+      const panel = document.createElement("div");
+      panel.className = "sources-panel";
+      panel.setAttribute("role", "dialog");
+      panel.setAttribute("aria-modal", "true");
+      panel.setAttribute("aria-label", "Sources");
+
+      const header = document.createElement("div");
+      header.className = "sources-panel-header";
+
+      const title = document.createElement("div");
+      title.className = "sources-panel-title";
+      title.textContent = "Sources";
+
+      const closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "sources-panel-close";
+      closeBtn.textContent = "×";
+      closeBtn.title = "Close";
+
+      header.appendChild(title);
+      header.appendChild(closeBtn);
+
+      const list = document.createElement("div");
+      list.className = "sources-panel-list";
+
+      panel.appendChild(header);
+      panel.appendChild(list);
+      backdrop.appendChild(panel);
+      document.body.appendChild(backdrop);
+
+      const hide = () => {
+        backdrop.classList.add("hidden");
+        try { backdrop.setAttribute("aria-hidden", "true"); } catch (_e) {}
+      };
+
+      closeBtn.addEventListener("click", hide);
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) {
+          hide();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !backdrop.classList.contains("hidden")) {
+          hide();
+        }
+      });
+
+      return backdrop;
+    }
+
+    function showSourcesPanel(sources) {
+      const normalizedSources = Array.isArray(sources) ? sources : [];
+      if (normalizedSources.length === 0) {
+        return;
+      }
+
+      const backdrop = ensureSourcesPanel();
+      const panel = backdrop.querySelector(".sources-panel");
+      const list = backdrop.querySelector(".sources-panel-list");
+      if (!panel || !list) {
+        return;
+      }
+
+      list.innerHTML = "";
+
+      normalizedSources.forEach((src) => {
+        const title = String(src && src.title ? src.title : "").trim();
+        const url = normalizeHttpUrl(src && src.url ? src.url : "");
+        if (!url) {
+          return;
+        }
+
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "sources-panel-item";
+
+        const label = document.createElement("div");
+        label.className = "sources-panel-item-title";
+        label.textContent = title || url;
+
+        const meta = document.createElement("div");
+        meta.className = "sources-panel-item-url";
+        meta.textContent = url;
+
+        card.appendChild(label);
+        card.appendChild(meta);
+
+        card.addEventListener("click", async () => {
+          try {
+            const opener = options.assistantAPI?.openExternal || window.assistantAPI?.openExternal;
+            if (typeof opener === "function") {
+              const result = await opener(url);
+              if (result === false) {
+                throw new Error("External open rejected");
+              }
+              showToast("Opened source", url, "success");
+              return;
+            }
+            const win = window.open(url, "_blank", "noopener,noreferrer");
+            if (!win) {
+              throw new Error("Popup blocked");
+            }
+            showToast("Opened source", url, "success");
+          } catch (error) {
+            try {
+              const plainCopy =
+                (typeof navigator !== "undefined" &&
+                  navigator.clipboard &&
+                  typeof navigator.clipboard.writeText === "function")
+                  ? (text) => navigator.clipboard.writeText(String(text || ""))
+                  : null;
+
+              if (plainCopy) {
+                await plainCopy(url);
+                showToast("Could not open link. URL copied.", url, "warning");
+                return;
+              }
+            } catch (_e) {}
+
+            showToast("Could not open link", String(error && error.message ? error.message : error), "warning");
+          }
+        });
+
+        list.appendChild(card);
+      });
+
+      backdrop.classList.remove("hidden");
+      try { backdrop.setAttribute("aria-hidden", "false"); } catch (_e) {}
+    }
+
     async function copyToClipboard(text) {
       const safeText = String(text || "");
       console.log("Copy triggered:", safeText.length);
@@ -887,7 +1090,59 @@
       }
     }
 
-    function createAssistantActions(getRawText) {
+    async function copyRichToClipboard(payload) {
+      const data = payload && typeof payload === "object" ? payload : {};
+      const safeText = String(data.text || "");
+      const safeHtml = String(data.html || "");
+
+      try {
+        // Prefer browser Clipboard API when available: it matches the same pathway as manual selection copy
+        // and is more compatible with destinations like Google Docs.
+        if (
+          safeHtml &&
+          typeof navigator !== "undefined" &&
+          navigator.clipboard &&
+          typeof navigator.clipboard.write === "function" &&
+          typeof window !== "undefined" &&
+          typeof window.ClipboardItem === "function"
+        ) {
+          const htmlBlob = new Blob([safeHtml], { type: "text/html" });
+          const textBlob = new Blob([safeText], { type: "text/plain" });
+          await navigator.clipboard.write([
+            new window.ClipboardItem({
+              "text/html": htmlBlob,
+              "text/plain": textBlob
+            })
+          ]);
+          return;
+        }
+
+        if (safeHtml && typeof window.electronAPI?.copyRich === "function") {
+          const result = window.electronAPI.copyRich({ text: safeText, html: safeHtml });
+          if (result && typeof result.then === "function") {
+            await result;
+          }
+          return;
+        }
+
+        const assistantCopyRich =
+          options.assistantAPI?.writeClipboardRich || window.assistantAPI?.writeClipboardRich;
+        if (safeHtml && typeof assistantCopyRich === "function") {
+          const result = assistantCopyRich({ text: safeText, html: safeHtml });
+          if (result && typeof result.then === "function") {
+            await result;
+          }
+          return;
+        }
+
+        // Fallback to plain text copy.
+        await copyToClipboard(safeText);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
+
+    function createAssistantActions(getRawText, getHtml, getSources) {
       const actions = document.createElement("div");
       actions.className = "message-actions";
 
@@ -898,10 +1153,32 @@
       btn.title = "Copy entire assistant response";
 
       btn.addEventListener("click", () => {
-        copyCodeText(String(getRawText() || ""), btn);
+        const text = String(getRawText ? getRawText() : "");
+        const html = typeof getHtml === "function" ? String(getHtml() || "") : "";
+
+        copyRichToClipboard({ text, html })
+          .then(() => setCopyButtonState(btn, "Copied \u2713"))
+          .catch((error) => {
+            console.error("Message copy failed:", error);
+            setCopyButtonState(btn, "Failed", 1500, getCopyResetLabel(btn));
+          });
       });
 
       actions.appendChild(btn);
+
+      const sources = typeof getSources === "function" ? getSources() : [];
+      if (Array.isArray(sources) && sources.length > 0) {
+        const sourcesBtn = document.createElement("button");
+        sourcesBtn.type = "button";
+        sourcesBtn.className = "message-copy-btn message-sources-btn";
+        sourcesBtn.textContent = `Sources (${sources.length})`;
+        sourcesBtn.title = "View sources";
+        sourcesBtn.addEventListener("click", () => {
+          showSourcesPanel(sources);
+        });
+        actions.appendChild(sourcesBtn);
+      }
+
       return actions;
     }
 
@@ -1537,12 +1814,14 @@
 
       const { row, bubble, meta } = createMessageShell("assistant");
       let streamText = "";
+      let streamSources = [];
 
-      const actions = createAssistantActions(() => streamText);
       const content = document.createElement("div");
       content.className = "message-text markdown-content markdown-body streaming-cursor";
+      content.style.whiteSpace = "pre-wrap";
+      const actions = createAssistantActions(() => streamText, () => content.innerHTML, () => streamSources);
       const renderState = { lastHtml: "" };
-      let pendingRender = false;
+      let pendingTextPaint = false;
       let debounceHandle = null;
 
       if (meta) {
@@ -1552,24 +1831,24 @@
       appendMessageRow(row);
       scrollChatToBottom();
 
-      const flush = (force = false, enableMermaid = false) => {
-        if (!force && !pendingRender) {
+      const flushPlainText = (force = false) => {
+        if (!force && !pendingTextPaint) {
           return;
         }
-        pendingRender = false;
-        renderAssistantContent(content, streamText, renderState, { enableMermaid });
+        pendingTextPaint = false;
+        content.textContent = streamText;
         scrollChatToBottom();
       };
 
       const schedule = () => {
-        pendingRender = true;
+        pendingTextPaint = true;
         if (debounceHandle) {
           return;
         }
 
         debounceHandle = setTimeout(() => {
           debounceHandle = null;
-          flush(true);
+          flushPlainText(true);
         }, constants.STREAM_RENDER_DEBOUNCE_MS);
       };
 
@@ -1588,14 +1867,20 @@
             streamText = "No response from the model.";
           }
 
+          const extracted = extractSourcesBlock(streamText);
+          streamText = extracted.cleanText;
+          streamSources = extracted.sources;
+
           if (debounceHandle) {
             clearTimeout(debounceHandle);
             debounceHandle = null;
           }
 
-          pendingRender = true;
-          flush(true, enableMermaid);
+          pendingTextPaint = true;
+          flushPlainText(true);
+          renderAssistantContent(content, streamText, renderState, { enableMermaid });
           content.classList.remove("streaming-cursor");
+          content.style.whiteSpace = "";
           appendFileAttachments(bubble, optionsArg.files || optionsArg.attachments || optionsArg.fileList);
           appendImageBlock(bubble, optionsArg.image || optionsArg.imagePayload);
           scrollChatToBottom();
@@ -1649,11 +1934,14 @@
 
       const { row, bubble, meta } = createMessageShell("assistant");
       const rawText = normalizeMessageContent(markdownText);
-      const actions = createAssistantActions(() => rawText);
+      const extracted = extractSourcesBlock(rawText);
+      const cleanText = extracted.cleanText;
+      const sources = extracted.sources;
       const content = document.createElement("div");
       content.className = "message-text markdown-content markdown-body";
+      const actions = createAssistantActions(() => rawText, () => content.innerHTML, () => sources);
 
-      renderAssistantContent(content, rawText, {}, { enableMermaid: true });
+      renderAssistantContent(content, cleanText, {}, { enableMermaid: true });
       if (meta) {
         meta.appendChild(actions);
       }
@@ -1717,7 +2005,7 @@
       bubble.appendChild(actionsWrap);
 
       if (meta) {
-        meta.appendChild(createAssistantActions(() => content.textContent));
+        meta.appendChild(createAssistantActions(() => content.textContent, () => bubble.innerHTML, () => []));
       }
 
       hideEmptyState();

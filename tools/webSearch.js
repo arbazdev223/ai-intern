@@ -390,6 +390,21 @@ function filterNewsResultByQuery(query, result) {
     .slice(0, 8)
     .map(({ score, hardNewsSignal, offTopicSignal, mojibakeSignal, staleForFreshQuery, ...rest }) => rest);
 
+  if (filtered.length === 0 && freshnessSensitiveQuery && !broadWorldQuery && !worldScope) {
+    const bestAvailable = scored
+      .filter((item) => !item.mojibakeSignal)
+      .slice(0, 8)
+      .map(({ score, hardNewsSignal, offTopicSignal, mojibakeSignal, staleForFreshQuery, ...rest }) => rest);
+
+    if (bestAvailable.length > 0) {
+      return {
+        summary: buildHeadlineSummary(bestAvailable),
+        relatedTopics: bestAvailable.map((item) => item.title).slice(0, 6),
+        sources: bestAvailable
+      };
+    }
+  }
+
   return {
     summary: buildHeadlineSummary(filtered),
     relatedTopics: filtered.map((item) => item.title).slice(0, 6),
@@ -788,10 +803,8 @@ function verifyResultRelevance(query, result, options = {}) {
 }
 
 async function searchTrustedCurrentEventsFeeds() {
-  const allItems = [];
-
-  for (const feed of TRUSTED_WORLD_NEWS_FEEDS) {
-    try {
+  const settled = await Promise.allSettled(
+    TRUSTED_WORLD_NEWS_FEEDS.map(async (feed) => {
       const response = await fetchWithRetry(
         feed.url,
         {
@@ -804,18 +817,15 @@ async function searchTrustedCurrentEventsFeeds() {
       );
 
       if (!response.ok) {
-        continue;
+        return [];
       }
 
       const xml = await response.text();
-      const parsed = parseRssItems(xml, feed.source);
-      if (parsed.length > 0) {
-        allItems.push(...parsed.slice(0, 3));
-      }
-    } catch (_error) {
-      // best effort
-    }
-  }
+      return parseRssItems(xml, feed.source).slice(0, 3);
+    })
+  );
+
+  const allItems = settled.flatMap((entry) => (entry.status === "fulfilled" ? entry.value : []));
 
   const deduped = [];
   const seen = new Set();
@@ -911,35 +921,40 @@ async function searchWeb(query) {
   const searchIntent = classifySearchIntent(safeQuery);
 
   if (searchIntent === "latest_news") {
-    for (const candidate of candidates) {
-      try {
-        const googleNewsRaw = await searchGoogleNewsRss(candidate);
-        const googleNews = filterNewsResultByQuery(safeQuery, googleNewsRaw);
-        if (
-          Array.isArray(googleNews.sources) &&
-          googleNews.sources.length > 0 &&
-          verifyResultRelevance(safeQuery, googleNews, { minScore: 0 })
-        ) {
-          return googleNews;
-        }
-      } catch (_error) {
-        // Try next candidate/fallback.
+    const googleNewsAttempts = await Promise.allSettled(candidates.map((candidate) => searchGoogleNewsRss(candidate)));
+
+    for (let index = 0; index < googleNewsAttempts.length; index += 1) {
+      if (googleNewsAttempts[index].status !== "fulfilled") {
+        continue;
+      }
+
+      const googleNews = filterNewsResultByQuery(safeQuery, googleNewsAttempts[index].value);
+      if (
+        Array.isArray(googleNews.sources) &&
+        googleNews.sources.length > 0 &&
+        verifyResultRelevance(safeQuery, googleNews, { minScore: 0 })
+      ) {
+        return googleNews;
       }
     }
 
-    try {
-      const topNewsRaw = await searchGoogleNewsTop();
-      const topNews = filterNewsResultByQuery(safeQuery, topNewsRaw);
+    const fallbackNewsResults = await Promise.allSettled([
+      searchGoogleNewsTop(),
+      searchTrustedCurrentEventsFeeds()
+    ]);
+
+    if (fallbackNewsResults[0] && fallbackNewsResults[0].status === "fulfilled") {
+      const topNews = filterNewsResultByQuery(safeQuery, fallbackNewsResults[0].value);
       if (Array.isArray(topNews.sources) && topNews.sources.length > 0) {
         return topNews;
       }
-    } catch (_error) {
-      // continue fallback chain
     }
 
-    const rssResult = await searchTrustedCurrentEventsFeeds();
-    if (Array.isArray(rssResult.sources) && rssResult.sources.length > 0) {
-      return rssResult;
+    if (fallbackNewsResults[1] && fallbackNewsResults[1].status === "fulfilled") {
+      const rssResult = fallbackNewsResults[1].value;
+      if (Array.isArray(rssResult.sources) && rssResult.sources.length > 0) {
+        return rssResult;
+      }
     }
   }
 

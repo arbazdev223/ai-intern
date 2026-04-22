@@ -1,14 +1,15 @@
 {
   "name": "ifda-ai",
-  "version": "1.0.6",
+  "version": "1.0.12",
   "author": "IFDA",
   "description": "Electron desktop chat app using OpenAI and Gemini APIs",
   "main": "main.js",
   "scripts": {
     "start": "set ELECTRON_RUN_AS_NODE=&& set NODE_ENV=development&& electron .",
-    "build": "electron-builder --publish always",
-    "dist": "set ELECTRON_BUILDER_OUT_DIR=%TEMP%\\ai-intern-dist&& electron-builder --win",
-    "release:win": "set ELECTRON_BUILDER_OUT_DIR=%TEMP%\\ai-intern-dist&& electron-builder --win --publish always -c.publish.provider=github -c.publish.owner=%IFDA_UPDATE_OWNER% -c.publish.repo=%IFDA_UPDATE_REPO%",
+    "build": "electron-builder --publish never",
+    "bundle:keys": "node scripts/generateBundledSecrets.js",
+    "dist": "node scripts/generateBundledSecrets.js && electron-builder --win --publish never --config.directories.output=%TEMP%\\ai-intern-dist",
+    "release:win": "node scripts/generateBundledSecrets.js && electron-builder --win --publish always --config.directories.output=%TEMP%\\ai-intern-dist --config.publish.provider=github --config.publish.owner=%IFDA_UPDATE_OWNER% --config.publish.repo=%IFDA_UPDATE_REPO% --config.publish.releaseType=release",
     "generate:sri": "node scripts/generateSRI.js",
     "check:sri": "node scripts/generateSRI.js --check",
     "test": "jest",
@@ -22,17 +23,28 @@
     "icon": "blue-logo.ico",
     "appId": "com.ai.intern",
     "productName": "AI Intern",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "${env.IFDA_UPDATE_OWNER}",
-        "repo": "${env.IFDA_UPDATE_REPO}"
-      }
+    "files": [
+      "**/*",
+      "!.git/**",
+      "!.github/**",
+      "!dist/**",
+      "!artifacts/**",
+      "!__tests__/**",
+      "!docs/**",
+      "!coverage/**",
+      "!scripts/**",
+      "!electron-smoke-*.log",
+      "!*.log",
+      "!.env",
+      "!.env.example",
+      "!.gitignore",
+      "!README.md",
+      "!CONTRIBUTING.md"
     ],
     "win": {
       "icon": "blue-logo.ico",
       "target": "nsis",
-      "artifactName": "IFDA AI Setup ${version}.${ext}"
+      "artifactName": "IFDA-AI-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,

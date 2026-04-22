@@ -13,7 +13,7 @@ function createWindowManager(options = {}) {
   let floatingButtonWindow = null;
   let isQuitting = false;
   let currentApp = "Unknown application";
-  let activeAppInterval = null;
+  let activeAppTimer = null;
   let activeWinFn = null;
   let isChatExpanded = false;
   let isUpdatingChatBounds = false;
@@ -247,12 +247,47 @@ function createWindowManager(options = {}) {
     return currentApp;
   }
 
+  function resolveActiveAppPollDelayMs() {
+    const chatVisible = Boolean(chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible());
+    const floatingVisible = Boolean(
+      floatingButtonWindow &&
+        !floatingButtonWindow.isDestroyed() &&
+        floatingButtonWindow.isVisible()
+    );
+
+    if (chatVisible || floatingVisible) {
+      return constants.ACTIVE_APP_POLL_MS;
+    }
+
+    return Math.max(constants.ACTIVE_APP_POLL_MS * 4, 12000);
+  }
+
+  function clearActiveAppTimer() {
+    if (activeAppTimer) {
+      clearTimeout(activeAppTimer);
+      activeAppTimer = null;
+    }
+  }
+
+  function scheduleActiveAppMonitoring(delayMs = resolveActiveAppPollDelayMs()) {
+    if (!activeWinFn) {
+      return;
+    }
+
+    clearActiveAppTimer();
+    activeAppTimer = setTimeout(async () => {
+      activeAppTimer = null;
+      await detectActiveApplication();
+      scheduleActiveAppMonitoring();
+    }, delayMs);
+  }
+
   async function startActiveAppMonitoring() {
     try {
       const activeWinModule = await import("active-win");
       activeWinFn = activeWinModule.default || activeWinModule;
       await detectActiveApplication();
-      activeAppInterval = setInterval(detectActiveApplication, constants.ACTIVE_APP_POLL_MS);
+      scheduleActiveAppMonitoring(constants.ACTIVE_APP_POLL_MS);
     } catch (_error) {
       currentApp = "Unknown application";
     }
@@ -263,12 +298,16 @@ function createWindowManager(options = {}) {
       positionWindows();
       floatingButtonWindow.show();
     }
+
+    scheduleActiveAppMonitoring();
   }
 
   function hideFloatingButton() {
     if (floatingButtonWindow && !floatingButtonWindow.isDestroyed()) {
       floatingButtonWindow.hide();
     }
+
+    scheduleActiveAppMonitoring();
   }
 
   function emitShortcutOpenEvent() {
@@ -301,6 +340,7 @@ function createWindowManager(options = {}) {
     chatWindow.focus();
     hideFloatingButton();
     pushCurrentAppToRenderer();
+    scheduleActiveAppMonitoring();
 
     if (options.fromShortcut && !wasVisible) {
       emitShortcutOpenEvent();
@@ -314,6 +354,7 @@ function createWindowManager(options = {}) {
 
     chatWindow.hide();
     showFloatingButton();
+    scheduleActiveAppMonitoring();
   }
 
   function hideChatWindowForCapture() {
@@ -815,6 +856,13 @@ function createWindowManager(options = {}) {
                       progress: 0,
                       ready: false
                     });
+                  } else if (reason === "updater_disabled") {
+                    renderUpdatePopup({
+                      version: "N/A",
+                      status: "Updater is disabled until IFDA_AUTO_UPDATE_ENABLED=true is configured.",
+                      progress: 0,
+                      ready: false
+                    });
                   } else if (reason === "updater_not_configured") {
                     renderUpdatePopup({
                       version: "N/A",
@@ -1142,10 +1190,7 @@ function createWindowManager(options = {}) {
   }
 
   function dispose() {
-    if (activeAppInterval) {
-      clearInterval(activeAppInterval);
-      activeAppInterval = null;
-    }
+    clearActiveAppTimer();
   }
 
   return {

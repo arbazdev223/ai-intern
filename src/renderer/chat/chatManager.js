@@ -19,6 +19,15 @@
     let voiceInputPrefix = "";
     let voiceChunks = [];
     let voiceMimeType = "audio/webm";
+    let voiceAudioContext = null;
+    let voiceAnalyser = null;
+    let voiceAnalyserData = null;
+    let voiceWaveAnimationHandle = null;
+    let voiceWaveLevels = null;
+    let voiceWaveCssWidth = 0;
+    let voiceWaveCssHeight = 0;
+    let voiceWaveDpr = 1;
+    let shouldTranscribeVoice = true;
 
     function resolveVoiceLanguage() {
       const inputText = String((refs.promptInput && refs.promptInput.value) || "").trim();
@@ -48,6 +57,14 @@
       }
 
       refs.voiceButton.classList.toggle("is-recording", isVoiceRecording);
+      if (refs.voiceWaveWrap) {
+        refs.voiceWaveWrap.classList.toggle("hidden", !isVoiceRecording);
+        refs.voiceWaveWrap.setAttribute("aria-hidden", isVoiceRecording ? "false" : "true");
+      }
+      refs.voiceButton.classList.toggle("hidden", isVoiceRecording);
+      if (refs.chatForm) {
+        refs.chatForm.classList.toggle("is-voice-recording", isVoiceRecording);
+      }
       refs.voiceButton.setAttribute("aria-pressed", isVoiceRecording ? "true" : "false");
       refs.voiceButton.setAttribute(
         "aria-label",
@@ -56,12 +73,191 @@
       refs.voiceButton.title = isVoiceRecording ? "Stop voice input" : "Voice input";
     }
 
+    function stopVoiceWave() {
+      if (voiceWaveAnimationHandle) {
+        try {
+          cancelAnimationFrame(voiceWaveAnimationHandle);
+        } catch (_error) {}
+      }
+
+      voiceWaveAnimationHandle = null;
+      voiceAnalyser = null;
+      voiceAnalyserData = null;
+      voiceWaveLevels = null;
+
+      if (voiceAudioContext) {
+        try {
+          voiceAudioContext.close();
+        } catch (_error) {}
+      }
+      voiceAudioContext = null;
+
+      if (refs.voiceWaveCanvas) {
+        const ctx = refs.voiceWaveCanvas.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, refs.voiceWaveCanvas.width, refs.voiceWaveCanvas.height);
+        }
+      }
+    }
+
+    function startVoiceWave(stream) {
+      stopVoiceWave();
+      if (!refs.voiceWaveCanvas || !stream) {
+        return;
+      }
+
+      const CanvasCtx = refs.voiceWaveCanvas.getContext("2d");
+      if (!CanvasCtx) {
+        return;
+      }
+
+      const syncCanvasResolution = () => {
+        const canvas = refs.voiceWaveCanvas;
+        if (!canvas) {
+          return;
+        }
+
+        const rect = canvas.getBoundingClientRect();
+        const cssWidth = Math.max(1, Math.floor(rect.width));
+        const cssHeight = Math.max(1, Math.floor(rect.height));
+        const dpr = Math.max(1, Math.floor((window && window.devicePixelRatio) || 1));
+
+        // Resize backing store only when needed (prevents blur + weird spacing on scaled canvas).
+        if (canvas.width !== cssWidth * dpr || canvas.height !== cssHeight * dpr) {
+          canvas.width = cssWidth * dpr;
+          canvas.height = cssHeight * dpr;
+        }
+
+        voiceWaveCssWidth = cssWidth;
+        voiceWaveCssHeight = cssHeight;
+        voiceWaveDpr = dpr;
+
+        CanvasCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      };
+
+      syncCanvasResolution();
+
+      const AudioCtx =
+        (typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext)) || null;
+      if (!AudioCtx) {
+        return;
+      }
+
+      try {
+        voiceAudioContext = new AudioCtx();
+        const source = voiceAudioContext.createMediaStreamSource(stream);
+        voiceAnalyser = voiceAudioContext.createAnalyser();
+        voiceAnalyser.fftSize = 2048;
+        voiceAnalyser.smoothingTimeConstant = 0.86;
+        source.connect(voiceAnalyser);
+        voiceAnalyserData = new Uint8Array(voiceAnalyser.fftSize);
+      } catch (_error) {
+        stopVoiceWave();
+        return;
+      }
+
+      const computeBarCount = () => {
+        const gap = 1;
+        const minBarWidth = 2;
+        return Math.max(40, Math.min(450, Math.floor((voiceWaveCssWidth + gap) / (minBarWidth + gap))));
+      };
+
+      let barCount = computeBarCount();
+      voiceWaveLevels = new Array(barCount).fill(0.08);
+      let lastLevel = 0.08;
+
+      const draw = () => {
+        if (!isVoiceRecording || !voiceAnalyser || !voiceAnalyserData) {
+          stopVoiceWave();
+          return;
+        }
+
+        syncCanvasResolution();
+        const width = voiceWaveCssWidth;
+        const height = voiceWaveCssHeight;
+
+        const nextBarCount = computeBarCount();
+        if (nextBarCount !== barCount) {
+          barCount = nextBarCount;
+          voiceWaveLevels = new Array(barCount).fill(lastLevel);
+        }
+
+        voiceAnalyser.getByteTimeDomainData(voiceAnalyserData);
+
+        let sum = 0;
+        for (let i = 0; i < voiceAnalyserData.length; i++) {
+          const centered = (voiceAnalyserData[i] - 128) / 128;
+          sum += centered * centered;
+        }
+        const rms = Math.sqrt(sum / voiceAnalyserData.length); // 0..~1
+
+        // Smooth + keep a tiny idle pulse so the UI doesn't look frozen.
+        const target = Math.min(1, rms * 2.4);
+        const idle = 0.06 + Math.abs(Math.sin(Date.now() / 180)) * 0.02;
+        const nextLevel = Math.max(idle, target);
+        lastLevel = lastLevel * 0.78 + nextLevel * 0.22;
+
+        if (voiceWaveLevels) {
+          voiceWaveLevels.shift();
+          voiceWaveLevels.push(lastLevel);
+        }
+
+        CanvasCtx.clearRect(0, 0, width, height);
+
+        const gap = 1;
+        const barWidth = Math.max(2, Math.floor((width - gap * (barCount - 1)) / barCount));
+        const centerY = height / 2;
+        let x = 0;
+
+        const fill = CanvasCtx.createLinearGradient(0, 0, width, 0);
+        fill.addColorStop(0, "rgba(15, 23, 42, 0.92)");
+        fill.addColorStop(1, "rgba(2, 6, 23, 0.92)");
+        CanvasCtx.fillStyle = fill;
+
+        const hasRoundRect = typeof CanvasCtx.roundRect === "function";
+        for (let i = 0; i < barCount; i++) {
+          const level = voiceWaveLevels ? voiceWaveLevels[i] : 0.08;
+          const eased = Math.min(1, Math.pow(level, 0.7));
+          const h = Math.max(3, eased * height);
+          const y = centerY - h / 2;
+          const r = Math.min(5, barWidth / 2);
+
+          CanvasCtx.beginPath();
+          if (hasRoundRect) {
+            CanvasCtx.roundRect(x, y, barWidth, h, r);
+          } else {
+            const rx = r;
+            const ry = r;
+            CanvasCtx.moveTo(x + rx, y);
+            CanvasCtx.lineTo(x + barWidth - rx, y);
+            CanvasCtx.quadraticCurveTo(x + barWidth, y, x + barWidth, y + ry);
+            CanvasCtx.lineTo(x + barWidth, y + h - ry);
+            CanvasCtx.quadraticCurveTo(x + barWidth, y + h, x + barWidth - rx, y + h);
+            CanvasCtx.lineTo(x + rx, y + h);
+            CanvasCtx.quadraticCurveTo(x, y + h, x, y + h - ry);
+            CanvasCtx.lineTo(x, y + ry);
+            CanvasCtx.quadraticCurveTo(x, y, x + rx, y);
+          }
+          CanvasCtx.fill();
+
+          x += barWidth + gap;
+        }
+
+        voiceWaveAnimationHandle = requestAnimationFrame(draw);
+      };
+
+      voiceWaveAnimationHandle = requestAnimationFrame(draw);
+    }
+
     function setVoiceRecordingState(nextState) {
       isVoiceRecording = Boolean(nextState);
       updateVoiceButtonUi();
       if (!isVoiceRecording && refs.voiceLivePreview) {
         refs.voiceLivePreview.classList.add("hidden");
         refs.voiceLivePreview.textContent = "";
+      }
+      if (!isVoiceRecording) {
+        stopVoiceWave();
       }
     }
 
@@ -119,8 +315,22 @@
       try {
         mediaRecorder.stop();
       } catch (_error) {}
+      stopVoiceWave();
       setVoiceRecordingState(false);
       setStatus("Transcribing audio...", { busy: true });
+    }
+
+    function cancelVoiceInput() {
+      if (!mediaRecorder || !isVoiceRecording) {
+        return;
+      }
+      shouldTranscribeVoice = false;
+      try {
+        mediaRecorder.stop();
+      } catch (_error) {}
+      stopVoiceWave();
+      setVoiceRecordingState(false);
+      setStatus("Voice input cancelled.");
     }
 
     async function startVoiceInput() {
@@ -144,6 +354,7 @@
       voiceInputPrefix = String(refs.promptInput.value || "").trim();
       voiceChunks = [];
       applyVoiceTranscript("");
+      shouldTranscribeVoice = true;
 
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -170,6 +381,9 @@
 
         mediaRecorder.onstop = async () => {
           try {
+            if (!shouldTranscribeVoice) {
+              return;
+            }
             const audioBlob = new Blob(voiceChunks, { type: voiceMimeType || "audio/webm" });
             console.log("Blob type:", audioBlob.type, "size:", audioBlob.size);
 
@@ -212,6 +426,7 @@
 
         mediaRecorder.start();
         setVoiceRecordingState(true);
+        startVoiceWave(mediaStream);
         setStatus("Listening...", { busy: true });
       } catch (error) {
         console.error("Voice start error:", error);
@@ -256,6 +471,16 @@
       updateVoiceButtonUi();
 
       refs.voiceButton.addEventListener("click", handleVoiceButtonClick);
+      if (refs.voiceStopButton) {
+        refs.voiceStopButton.addEventListener("click", () => {
+          stopVoiceInput();
+        });
+      }
+      if (refs.voiceCancelButton) {
+        refs.voiceCancelButton.addEventListener("click", () => {
+          cancelVoiceInput();
+        });
+      }
     }
 
     function loadExternalScreenConsent() {
@@ -1265,6 +1490,11 @@
         const usedModel = response && response.usedModel ? String(response.usedModel) : "";
         const provider = response && response.provider ? String(response.provider) : "";
         const openAIEnabled = Boolean(response && response.openAIEnabled);
+        if (provider === "unconfigured") {
+          setModelStatus("Offline", "");
+          setStatus("AI unavailable. Please contact support.");
+          return;
+        }
         const resolved = resolveModeFromModel(usedModel);
         setModelStatus(resolved.mode, resolved.detail);
         const modelUsed = usedModel ? ` (${usedModel})` : "";
@@ -1279,7 +1509,7 @@
         setModelStatus("Offline", "");
 
         if (message.includes("No AI API configured") || message.includes("Missing OPENAI_API_KEY")) {
-          setStatus("AI API missing. Add OPENAI_API_KEY or GEMINI_API_KEY.");
+          setStatus("AI unavailable. Please contact support.");
         } else if (message.includes("External AI off")) {
           setStatus("External AI is off. Enable External AI to use screenshots.");
         } else {
@@ -1331,6 +1561,11 @@
         const usedModel = response && response.usedModel ? String(response.usedModel) : "";
         const provider = response && response.provider ? String(response.provider) : "";
         const openAIEnabled = Boolean(response && response.openAIEnabled);
+        if (provider === "unconfigured") {
+          setModelStatus("Offline", "");
+          setStatus("AI unavailable. Please contact support.");
+          return;
+        }
         const resolved = resolveModeFromModel(usedModel);
         setModelStatus(resolved.mode, resolved.detail);
         const modelUsed = usedModel ? ` (${usedModel})` : "";
@@ -1357,7 +1592,6 @@
     async function init() {
       options.messageRenderer.init();
       options.attachments.init();
-      options.promptLibrary.init();
       setTypingIndicator(false);
       setStatus("Ready");
       setModelStatus("Offline", "");

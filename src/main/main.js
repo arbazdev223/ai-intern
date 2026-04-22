@@ -9,6 +9,7 @@ const { createAiClient } = require("./aiClient");
 const { createVoiceService } = require("./voiceService");
 const { createUpdateService } = require("./updateService");
 const { registerIpcHandlers } = require("./ipcHandlers");
+const { createPromptLibraryService } = require("./services/promptLibraryService");
 
 const startupEnv = getEnv();
 
@@ -40,6 +41,7 @@ const aiClient = createAiClient({
   screenshotService
 });
 const voiceService = createVoiceService();
+const promptLibraryService = createPromptLibraryService();
 const updateService = createUpdateService({
   app,
   getMainWindow: () => windowManager.getChatWindow(),
@@ -89,6 +91,7 @@ if (!hasSingleInstanceLock) {
       aiClient,
       screenshotService,
       voiceService,
+      promptLibraryService,
       windowManager,
       updateService
     });

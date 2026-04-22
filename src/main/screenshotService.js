@@ -1,8 +1,8 @@
 const fs = require("fs/promises");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const { Worker } = require("worker_threads");
 const { app, desktopCapturer, nativeImage } = require("electron");
-const Tesseract = require("tesseract.js");
 const constants = require("../shared/constants");
 
 function createScreenshotService() {
@@ -81,13 +81,37 @@ function createScreenshotService() {
           ocrBuffer = resized.toPNG();
         }
       }
+      const finalText = await new Promise((resolve, reject) => {
+        const worker = new Worker(path.join(__dirname, "workers", "ocrWorker.js"), {
+          workerData: {
+            imageBuffer: ocrBuffer
+          }
+        });
+        let settled = false;
 
-      const result = await Tesseract.recognize(ocrBuffer, "eng");
-      const extractedText = String(result && result.data && result.data.text ? result.data.text : "")
-        .replace(/\r/g, "")
-        .trim();
+        worker.once("message", (message) => {
+          settled = true;
+          if (message && message.ok) {
+            resolve(String(message.text || ""));
+            return;
+          }
 
-      const finalText = extractedText.slice(0, constants.OCR_MAX_CHARS);
+          reject(new Error(message && message.error ? String(message.error) : "OCR worker failed."));
+        });
+
+        worker.once("error", (error) => {
+          settled = true;
+          reject(error);
+        });
+
+        worker.once("exit", (code) => {
+          if (settled || code === 0) {
+            return;
+          }
+          reject(new Error(`OCR worker exited with code ${code}.`));
+        });
+      });
+
       console.info("[ocr] end", { durationMs: Date.now() - startedAt, textLength: finalText.length });
       return finalText;
     } catch (_error) {

@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 const DEFAULT_MAX_RETRIES = Number.isFinite(Number(process.env.CONTROL_MAX_RETRIES))
   ? Number(process.env.CONTROL_MAX_RETRIES)
   : 2;
@@ -12,15 +14,30 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function normalizeUserPromptForCache(input) {
+function normalizeTextForCache(input) {
   return String(input || "")
     .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
+    .replace(/\s+/g, " ");
 }
 
-function buildCacheKey(promptKey, intentKey) {
-  return `${intentKey}:${promptKey}`;
+function hashText(input) {
+  return crypto.createHash("sha256").update(String(input || ""), "utf8").digest("hex");
+}
+
+function buildCacheKey(options = {}) {
+  const intentKey = String(options.intentKey || "default").trim().toLowerCase() || "default";
+  const fingerprint = hashText(
+    [
+      normalizeTextForCache(options.finalPrompt),
+      normalizeTextForCache(options.userPrompt),
+      normalizeTextForCache(options.rawPrompt),
+      normalizeTextForCache(options.systemPrompt),
+      normalizeTextForCache(options.inputType),
+      options.screenshotBase64 ? hashText(String(options.screenshotBase64 || "").trim()) : ""
+    ].join("\n---\n")
+  );
+
+  return `${intentKey}:${fingerprint}`;
 }
 
 function resolveSystemPrompt(_inputType, overridePrompt) {
@@ -28,6 +45,30 @@ function resolveSystemPrompt(_inputType, overridePrompt) {
     return overridePrompt.trim();
   }
   return "";
+}
+
+function isLowConfidenceResponse(text) {
+  const normalized = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) {
+    return true;
+  }
+
+  const lowConfidenceSignals = [
+    "i don't know",
+    "i dont know",
+    "not sure",
+    "cannot determine",
+    "can't determine",
+    "unable to determine",
+    "unknown",
+    "no idea"
+  ];
+
+  return lowConfidenceSignals.some((token) => normalized.includes(token));
 }
 
 async function callProvider(options) {
@@ -103,6 +144,7 @@ function createControlService({ modelService, metrics, responseCache, responseCa
       finalPrompt,
       screenshotBase64,
       userPrompt,
+      rawPrompt,
       intentKey,
       inputType,
       systemPrompt,
@@ -110,14 +152,21 @@ function createControlService({ modelService, metrics, responseCache, responseCa
       geminiEnabled
     } = options;
 
-    const promptKey = normalizeUserPromptForCache(userPrompt);
-    const intentSig = String(intentKey || "").trim().toLowerCase();
-    const cacheKey = buildCacheKey(promptKey, intentSig);
+    const cacheKey = buildCacheKey({
+      finalPrompt,
+      screenshotBase64,
+      userPrompt: userPrompt || finalPrompt,
+      rawPrompt,
+      intentKey,
+      inputType,
+      systemPrompt
+    });
+    const intentSig = String(intentKey || "default").trim().toLowerCase() || "default";
     const ttlMs = Number.isFinite(Number(responseCacheTTL))
       ? Number(responseCacheTTL)
       : DEFAULT_CACHE_TTL_MS;
 
-    if (responseCache && promptKey && intentSig) {
+    if (responseCache) {
       try {
         const cached = responseCache.get(cacheKey);
         if (
@@ -125,7 +174,7 @@ function createControlService({ modelService, metrics, responseCache, responseCa
           cached.ts &&
           Date.now() - cached.ts < ttlMs &&
           cached.intentKey === intentSig &&
-          cached.promptKey === promptKey
+          cached.cacheKey === cacheKey
         ) {
           if (metrics && typeof metrics.recordCacheHit === "function") {
             try {
@@ -154,8 +203,12 @@ function createControlService({ modelService, metrics, responseCache, responseCa
       throw new Error("No provider configured");
     }
 
-    for (const candidate of providers) {
+    let bestLowConfidenceResponse = null;
+
+    for (let providerIndex = 0; providerIndex < providers.length; providerIndex += 1) {
+      const candidate = providers[providerIndex];
       let attempt = 0;
+
       while (attempt <= DEFAULT_MAX_RETRIES) {
         if (attempt > 0) {
           const delay = DEFAULT_BACKOFF_MS * Math.pow(2, attempt - 1);
@@ -175,18 +228,23 @@ function createControlService({ modelService, metrics, responseCache, responseCa
 
         if (res.success) {
           const responsePayload = {
-            response: res.content,
+            response: String(res.content || ""),
             usedModel: res.usedModel || `${candidate.provider}:${candidate.model}`,
             provider: candidate.provider
           };
 
-          if (responseCache && promptKey && intentSig) {
+          if (isLowConfidenceResponse(responsePayload.response)) {
+            bestLowConfidenceResponse = bestLowConfidenceResponse || responsePayload;
+            break;
+          }
+
+          if (responseCache) {
             try {
               responseCache.set(cacheKey, {
                 value: responsePayload,
                 ts: Date.now(),
                 intentKey: intentSig,
-                promptKey
+                cacheKey
               });
             } catch (_error) {}
           }
@@ -199,6 +257,21 @@ function createControlService({ modelService, metrics, responseCache, responseCa
           break;
         }
       }
+    }
+
+    if (bestLowConfidenceResponse) {
+      if (responseCache) {
+        try {
+          responseCache.set(cacheKey, {
+            value: bestLowConfidenceResponse,
+            ts: Date.now(),
+            intentKey: intentSig,
+            cacheKey
+          });
+        } catch (_error) {}
+      }
+
+      return bestLowConfidenceResponse;
     }
 
     throw new Error("All model attempts failed");

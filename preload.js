@@ -34,6 +34,40 @@ function writeClipboardTextSafe(text) {
   return ipcRenderer.invoke("assistant:write-clipboard-text", { text: safeText });
 }
 
+function writeClipboardRichSafe(payload) {
+  const data = payload && typeof payload === "object" ? payload : {};
+  const safeText = String(data.text || "");
+  const safeHtml = String(data.html || "");
+
+  if (clipboard) {
+    // Prefer writeHTML when available: it sets the correct CF_HTML payload that browsers (Google Docs) paste as rich text.
+    if (safeHtml && typeof clipboard.writeHTML === "function") {
+      clipboard.writeHTML(safeHtml);
+      return true;
+    }
+
+    // Best: write both formats in one shot (avoids writeText overwriting HTML).
+    if (safeHtml && typeof clipboard.write === "function") {
+      clipboard.write({ text: safeText, html: safeHtml });
+      return true;
+    }
+
+    // Fallback: write plain text first, then HTML so HTML remains available.
+    if (safeText && typeof clipboard.writeText === "function") {
+      clipboard.writeText(safeText);
+    }
+
+    if (safeHtml && typeof clipboard.writeHTML === "function") {
+      clipboard.writeHTML(safeHtml);
+    }
+
+    return true;
+  }
+
+  // Fallback: at least copy plain text.
+  return writeClipboardTextSafe(safeText);
+}
+
 async function toSpeechPayload(input) {
   const payload = input && typeof input === "object" ? input : {};
   const hasBlob = typeof Blob !== "undefined";
@@ -128,6 +162,14 @@ contextBridge.exposeInMainWorld("assistantAPI", {
     }
     return image.toPNG().toString("base64");
   },
+  promptLibrary: {
+    createSavedPrompt: (payload) => ipcRenderer.invoke("assistant:prompt-library:create-saved", payload),
+    deleteSavedPrompt: (payload) => ipcRenderer.invoke("assistant:prompt-library:delete-saved", payload),
+    fetchCategories: () => ipcRenderer.invoke("assistant:prompt-library:list-categories"),
+    fetchSavedPrompts: () => ipcRenderer.invoke("assistant:prompt-library:list-saved"),
+    fetchTemplates: () => ipcRenderer.invoke("assistant:prompt-library:list-templates"),
+    updateSavedPrompt: (payload) => ipcRenderer.invoke("assistant:prompt-library:update-saved", payload)
+  },
   synthesizeSpeech: (payload) => ipcRenderer.invoke("assistant:tts", payload),
   transcribeSpeech: async (payload) => ipcRenderer.invoke("assistant:stt", await toSpeechPayload(payload)),
   sendPrompt: (payload) => ipcRenderer.invoke("ai:generate", payload),
@@ -145,11 +187,13 @@ contextBridge.exposeInMainWorld("assistantAPI", {
   },
   storeScreenshot: (payload) => ipcRenderer.invoke("assistant:store-screenshot", payload),
   toggleExpand: () => ipcRenderer.invoke("assistant:toggle-expand"),
-  writeClipboardText: (text) => writeClipboardTextSafe(text)
+  writeClipboardText: (text) => writeClipboardTextSafe(text),
+  writeClipboardRich: (payload) => writeClipboardRichSafe(payload)
 });
 
 contextBridge.exposeInMainWorld("electronAPI", {
   copyText: (text) => writeClipboardTextSafe(text),
+  copyRich: (payload) => writeClipboardRichSafe(payload),
   onUpdateAvailable: (callback) => {
     if (typeof callback !== "function") {
       return;

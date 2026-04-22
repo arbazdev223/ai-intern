@@ -101,6 +101,34 @@ function validateSttPayload(payload) {
   }
 }
 
+function validatePromptLibrarySavedPromptPayload(payload, { requirePromptId = false } = {}) {
+  ensurePayloadObject(payload, "Prompt library");
+
+  const result = {
+    title: ensureStringField(payload, "title", 512),
+    prompt: ensureStringField(payload, "prompt", MAX_TEXT_BYTES),
+    sourceTemplateId: "",
+    isFavorite: Boolean(payload.isFavorite)
+  };
+
+  if (payload.sourceTemplateId) {
+    result.sourceTemplateId = ensureStringField(payload, "sourceTemplateId", 256);
+  }
+
+  if (requirePromptId) {
+    result.promptId = ensureStringField(payload, "promptId", 256);
+  }
+
+  return result;
+}
+
+function validatePromptLibraryPromptIdPayload(payload) {
+  ensurePayloadObject(payload, "Prompt library");
+  return {
+    promptId: ensureStringField(payload, "promptId", 256)
+  };
+}
+
 function sanitizeFileName(name, fallback) {
   const safe = String(name || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
   return safe || String(fallback || "download");
@@ -205,7 +233,15 @@ async function ensureUniquePath(fsPromises, filePath) {
 }
 
 function registerIpcHandlers(options = {}) {
-  const { ipcMain, aiClient, screenshotService, voiceService, windowManager, updateService } = options;
+  const {
+    ipcMain,
+    aiClient,
+    screenshotService,
+    voiceService,
+    promptLibraryService,
+    windowManager,
+    updateService
+  } = options;
   const { clipboard, app, shell } = require("electron");
   const fsPromises = require("fs/promises");
   const path = require("path");
@@ -346,6 +382,77 @@ function registerIpcHandlers(options = {}) {
       return { filePath: targetPath };
     } catch (error) {
       throw new Error(`Open image failed: ${sanitizeErrorMessage(error)}`);
+    }
+  });
+
+  ipcMain.handle("assistant:prompt-library:list-categories", async () => {
+    try {
+      if (!promptLibraryService || typeof promptLibraryService.fetchCategories !== "function") {
+        return [];
+      }
+      return await promptLibraryService.fetchCategories();
+    } catch (error) {
+      throw new Error(`Prompt library categories failed: ${sanitizeErrorMessage(error)}`);
+    }
+  });
+
+  ipcMain.handle("assistant:prompt-library:list-templates", async () => {
+    try {
+      if (!promptLibraryService || typeof promptLibraryService.fetchTemplates !== "function") {
+        return [];
+      }
+      return await promptLibraryService.fetchTemplates();
+    } catch (error) {
+      throw new Error(`Prompt library templates failed: ${sanitizeErrorMessage(error)}`);
+    }
+  });
+
+  ipcMain.handle("assistant:prompt-library:list-saved", async () => {
+    try {
+      if (!promptLibraryService || typeof promptLibraryService.fetchSavedPrompts !== "function") {
+        return [];
+      }
+      return await promptLibraryService.fetchSavedPrompts();
+    } catch (error) {
+      throw new Error(`Prompt library saved prompts failed: ${sanitizeErrorMessage(error)}`);
+    }
+  });
+
+  ipcMain.handle("assistant:prompt-library:create-saved", async (_event, payload = {}) => {
+    try {
+      if (!promptLibraryService || typeof promptLibraryService.createSavedPrompt !== "function") {
+        throw new Error("Prompt library service unavailable.");
+      }
+      const normalized = validatePromptLibrarySavedPromptPayload(payload);
+      return await promptLibraryService.createSavedPrompt(normalized);
+    } catch (error) {
+      throw new Error(`Prompt library save failed: ${sanitizeErrorMessage(error)}`);
+    }
+  });
+
+  ipcMain.handle("assistant:prompt-library:update-saved", async (_event, payload = {}) => {
+    try {
+      if (!promptLibraryService || typeof promptLibraryService.updateSavedPrompt !== "function") {
+        throw new Error("Prompt library service unavailable.");
+      }
+      const normalized = validatePromptLibrarySavedPromptPayload(payload, { requirePromptId: true });
+      await promptLibraryService.updateSavedPrompt(normalized.promptId, normalized);
+      return true;
+    } catch (error) {
+      throw new Error(`Prompt library update failed: ${sanitizeErrorMessage(error)}`);
+    }
+  });
+
+  ipcMain.handle("assistant:prompt-library:delete-saved", async (_event, payload = {}) => {
+    try {
+      if (!promptLibraryService || typeof promptLibraryService.deleteSavedPrompt !== "function") {
+        throw new Error("Prompt library service unavailable.");
+      }
+      const normalized = validatePromptLibraryPromptIdPayload(payload);
+      await promptLibraryService.deleteSavedPrompt(normalized.promptId);
+      return true;
+    } catch (error) {
+      throw new Error(`Prompt library delete failed: ${sanitizeErrorMessage(error)}`);
     }
   });
 

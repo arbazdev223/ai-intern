@@ -26,6 +26,11 @@ function getOpenAIModel() {
   return String(env.OPENAI_MODEL || "gpt-4o-mini").trim();
 }
 
+function getOpenAIResearchModel() {
+  const env = getEnv();
+  return String(env.OPENAI_RESEARCH_MODEL || env.OPENAI_MODEL || "gpt-4.1").trim();
+}
+
 function getGeminiModel() {
   const env = getEnv();
   return String(env.GEMINI_MODEL || "gemini-1.5-flash").trim();
@@ -118,6 +123,7 @@ function createModelService() {
     getOpenAIClient,
     getGeminiClient,
     getOpenAIModel,
+    getOpenAIResearchModel,
     getGeminiModel,
     callOpenAIChat,
     callOpenAIVision,

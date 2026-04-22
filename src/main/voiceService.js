@@ -10,6 +10,33 @@ function createVoiceService() {
   const baseUrl = String(process.env.ELEVENLABS_BASE_URL || "https://api.elevenlabs.io").replace(/\/+$/, "");
   const openAiBaseUrl = String(process.env.OPENAI_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
   const saveDebugAudio = String(process.env.VOICE_SAVE_DEBUG_AUDIO || "false").trim().toLowerCase() === "true";
+  const debugVoiceLogs = String(process.env.VOICE_DEBUG_LOGS || "false").trim().toLowerCase() === "true";
+
+  function logVoiceDebug(message, payload) {
+    if (!debugVoiceLogs) {
+      return;
+    }
+
+    if (typeof payload === "undefined") {
+      console.info(`[voice][debug] ${message}`);
+      return;
+    }
+
+    console.info(`[voice][debug] ${message}`, payload);
+  }
+
+  function warnVoiceDebug(message, payload) {
+    if (!debugVoiceLogs) {
+      return;
+    }
+
+    if (typeof payload === "undefined") {
+      console.warn(`[voice][debug] ${message}`);
+      return;
+    }
+
+    console.warn(`[voice][debug] ${message}`, payload);
+  }
 
   function isElevenLabsBypassed() {
     const raw = String(process.env.ELEVENLABS_BYPASS || "true").trim().toLowerCase();
@@ -294,7 +321,11 @@ function createVoiceService() {
     }
 
     const data = await response.json().catch(() => ({}));
-    console.log("[voice][debug] Whisper response:", data, { language, model: String(model || "whisper-1") });
+    logVoiceDebug("Whisper response received", {
+      hasText: Boolean(data && data.text),
+      language: language || "",
+      model: String(model || "whisper-1")
+    });
     return {
       text: normalizeTranscript(data && data.text ? data.text : ""),
       raw: data,
@@ -495,7 +526,11 @@ function createVoiceService() {
     if (!buffer || buffer.length === 0) {
       throw new Error("Empty audio file.");
     }
-    console.log("STT FILE:", filename, mimeType, buffer.length);
+    logVoiceDebug("STT payload accepted", {
+      filename,
+      mimeType,
+      bytes: buffer.length
+    });
     const preferLocalStt = String(process.env.PREFER_LOCAL_STT || "false").trim().toLowerCase() === "true";
 
     if (saveDebugAudio) {
@@ -503,12 +538,12 @@ function createVoiceService() {
         const debugPath = String(process.env.VOICE_DEBUG_AUDIO_PATH || "").trim() ||
           path.join(os.tmpdir(), "ifda-debug-audio.webm");
         fs.writeFileSync(debugPath, buffer);
-        console.log("[voice][debug] Saved audio file:", debugPath, "bytes:", buffer.length);
+        logVoiceDebug("Saved debug audio file", {
+          path: debugPath,
+          bytes: buffer.length
+        });
       } catch (error) {
-        console.warn(
-          "[voice][debug] Failed to save debug audio file:",
-          error && error.message ? error.message : error
-        );
+        warnVoiceDebug("Failed to save debug audio file", error && error.message ? error.message : error);
       }
     }
 
@@ -537,10 +572,7 @@ function createVoiceService() {
           };
         }
       } catch (error) {
-        console.warn(
-          "[voice][debug] Whisper translation mode failed:",
-          error && error.message ? error.message : error
-        );
+        warnVoiceDebug("Whisper translation mode failed", error && error.message ? error.message : error);
       }
     }
 
@@ -552,7 +584,9 @@ function createVoiceService() {
           languageCode: languageCode || ""
         });
         if (localText && !looksLikeMojibake(localText) && !isMeaninglessTranscript(localText)) {
-          console.log("[voice][debug] Local faster-whisper primary used:", JSON.stringify(localText));
+          logVoiceDebug("Local faster-whisper primary used", {
+            length: String(localText || "").length
+          });
           return {
             text: localText,
             provider: "python-faster-whisper",
@@ -560,13 +594,10 @@ function createVoiceService() {
           };
         }
         if (localText) {
-          console.warn("[voice][debug] Local faster-whisper primary rejected as corrupted/meaningless transcript");
+          warnVoiceDebug("Local faster-whisper primary rejected as low-confidence transcript");
         }
       } catch (error) {
-        console.warn(
-          "[voice][debug] Local faster-whisper primary failed:",
-          error && error.message ? error.message : error
-        );
+        warnVoiceDebug("Local faster-whisper primary failed", error && error.message ? error.message : error);
       }
     }
     const attempts = [{ language: languageCode || "", model: "whisper-1" }];
@@ -666,8 +697,8 @@ function createVoiceService() {
             break;
           }
         } catch (error) {
-          console.warn(
-            `[voice][debug] Fallback STT model failed (${fallbackModel}):`,
+          warnVoiceDebug(
+            `Fallback STT model failed (${fallbackModel})`,
             error && error.message ? error.message : error
           );
         }
@@ -695,13 +726,12 @@ function createVoiceService() {
             score: Math.max(best.score, scoreTranscript(localText) + 120),
             provider: "python-faster-whisper"
           };
-          console.log("[voice][debug] Local faster-whisper fallback used:", JSON.stringify(localText));
+          logVoiceDebug("Local faster-whisper fallback used", {
+            length: String(localText || "").length
+          });
         }
       } catch (error) {
-        console.warn(
-          "[voice][debug] Local faster-whisper fallback failed:",
-          error && error.message ? error.message : error
-        );
+        warnVoiceDebug("Local faster-whisper fallback failed", error && error.message ? error.message : error);
       }
     }
 

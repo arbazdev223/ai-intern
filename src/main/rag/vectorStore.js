@@ -1,4 +1,5 @@
 const fs = require("fs/promises");
+const os = require("os");
 const path = require("path");
 const { app } = require("electron");
 
@@ -13,7 +14,10 @@ function createVectorStore(options = {}) {
   let writePromise = Promise.resolve();
 
   function getStorePath() {
-    const base = app && typeof app.getPath === "function" ? app.getPath("userData") : process.cwd();
+    const base =
+      app && typeof app.getPath === "function"
+        ? app.getPath("userData")
+        : path.join(os.tmpdir(), "ifda-ai");
     return path.join(base, STORE_DIR, STORE_FILE);
   }
 

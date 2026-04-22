@@ -1,10 +1,49 @@
 (function (root) {
   const constants = root.SharedModules.constants;
-  const PROMPT_LIBRARY_API_BASE = "https://ims.ifda.in/api/prompt-library";
-  const PROMPT_LIBRARY_TOKEN_KEY = "assistant.promptLibraryBearerToken";
-  const PROMPT_LIBRARY_MASTER_SECRET_KEY = "assistant.promptLibraryMasterSecret";
-  const PROMPT_LIBRARY_USER_ID_KEY = "assistant.promptLibraryUserId";
-  const PROMPT_LIBRARY_API_TIMEOUT_MS = 15000;
+
+  function clonePromptCategories(items) {
+    if (!Array.isArray(items)) {
+      return [];
+    }
+
+    return items
+      .map((category) => {
+        if (!category || typeof category !== "object") {
+          return null;
+        }
+
+        const prompts = Array.isArray(category.prompts)
+          ? category.prompts
+              .map((prompt) => {
+                if (!prompt || typeof prompt !== "object") {
+                  return null;
+                }
+
+                return {
+                  id: String(prompt.id || "").trim(),
+                  title: String(prompt.title || "").trim(),
+                  prompt: String(prompt.prompt || "").trim()
+                };
+              })
+              .filter((prompt) => prompt && prompt.id && prompt.title && prompt.prompt)
+          : [];
+
+        const id = String(category.id || "").trim();
+        const title = String(category.title || "").trim();
+        if (!id || !title) {
+          return null;
+        }
+
+        return {
+          id,
+          title,
+          description: String(category.description || "").trim(),
+          sortOrder: Number.isFinite(Number(category.sortOrder)) ? Number(category.sortOrder) : 100,
+          prompts
+        };
+      })
+      .filter(Boolean);
+  }
 
   function createPromptLibraryController(options = {}) {
     const refs = options.refs;
@@ -15,7 +54,7 @@
     let promptSearchQuery = "";
     let lastPromptCatalog = [];
     let savedPromptDialogState = null;
-    let promptCategories = [];
+    let promptCategories = clonePromptCategories(constants.PROMPT_LIBRARY_CATEGORIES);
 
     function createSavedPromptId() {
       return `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -63,101 +102,9 @@
       };
     }
 
-    function readSetting(key) {
-      if (typeof localStorage === "undefined") {
-        return "";
-      }
-
-      try {
-        return String(localStorage.getItem(key) || "").trim();
-      } catch (_error) {
-        return "";
-      }
-    }
-
-    function getAuthContext() {
-      const token = readSetting(PROMPT_LIBRARY_TOKEN_KEY);
-      const masterSecret = readSetting(PROMPT_LIBRARY_MASTER_SECRET_KEY);
-      const userId = readSetting(PROMPT_LIBRARY_USER_ID_KEY);
-
-      if (token) {
-        return { mode: "bearer", token, masterSecret: "", userId: "" };
-      }
-
-      if (masterSecret) {
-        return { mode: "master", token: "", masterSecret, userId };
-      }
-
-      return { mode: "none", token: "", masterSecret: "", userId: "" };
-    }
-
-    function buildAuthHeaders(authContext) {
-      const headers = {
-        "Content-Type": "application/json"
-      };
-
-      if (!authContext || authContext.mode === "none") {
-        return headers;
-      }
-
-      if (authContext.mode === "bearer") {
-        headers.Authorization = `Bearer ${authContext.token}`;
-      } else if (authContext.mode === "master") {
-        headers["x-master-secret"] = authContext.masterSecret;
-      }
-
-      return headers;
-    }
-
-    async function apiRequest(path, requestOptions = {}) {
-      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timeoutId = controller
-        ? setTimeout(() => {
-            controller.abort();
-          }, PROMPT_LIBRARY_API_TIMEOUT_MS)
-        : null;
-
-      try {
-        const response = await fetch(`${PROMPT_LIBRARY_API_BASE}${path}`, {
-          method: requestOptions.method || "GET",
-          headers: requestOptions.headers || {},
-          body: requestOptions.body,
-          signal: controller ? controller.signal : undefined
-        });
-
-        const text = await response.text();
-        let payload = {};
-        try {
-          payload = text ? JSON.parse(text) : {};
-        } catch (_error) {
-          payload = {};
-        }
-
-        if (!response.ok) {
-          const message =
-            (payload && payload.message && String(payload.message)) ||
-            `Prompt library API request failed (${response.status}).`;
-          throw new Error(message);
-        }
-
-        return payload;
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-    }
-
-    function parseArrayPayload(payload) {
-      if (Array.isArray(payload)) {
-        return payload;
-      }
-
-      if (payload && Array.isArray(payload.data)) {
-        return payload.data;
-      }
-
-      return [];
+    function getPromptLibraryBridge() {
+      const bridge = root.assistantAPI && root.assistantAPI.promptLibrary;
+      return bridge && typeof bridge === "object" ? bridge : null;
     }
 
     function setPromptCategories(nextCategories) {
@@ -165,12 +112,16 @@
         return;
       }
 
-      promptCategories = nextCategories;
+      promptCategories = clonePromptCategories(nextCategories);
     }
 
     async function fetchCategoriesFromApi() {
-      const payload = await apiRequest("/categories");
-      const rows = parseArrayPayload(payload);
+      const bridge = getPromptLibraryBridge();
+      if (!bridge || typeof bridge.fetchCategories !== "function") {
+        return [];
+      }
+
+      const rows = await bridge.fetchCategories();
 
       return rows
         .map((item) => {
@@ -196,8 +147,12 @@
     }
 
     async function fetchTemplatesFromApi() {
-      const payload = await apiRequest("/templates?page=1&limit=500");
-      const rows = parseArrayPayload(payload);
+      const bridge = getPromptLibraryBridge();
+      if (!bridge || typeof bridge.fetchTemplates !== "function") {
+        return [];
+      }
+
+      const rows = await bridge.fetchTemplates();
       return rows.map(normalizePromptTemplateItem).filter(Boolean);
     }
 
@@ -250,86 +205,53 @@
     }
 
     async function fetchSavedPromptsFromApi() {
-      const authContext = getAuthContext();
-      if (authContext.mode === "none") {
+      const bridge = getPromptLibraryBridge();
+      if (!bridge || typeof bridge.fetchSavedPrompts !== "function") {
         return null;
       }
 
-      let query = "";
-      if (authContext.mode === "master" && authContext.userId) {
-        query = `?userId=${encodeURIComponent(authContext.userId)}`;
-      }
-
-      const payload = await apiRequest(`/saved${query}`, {
-        method: "GET",
-        headers: buildAuthHeaders(authContext)
-      });
-
-      return parseArrayPayload(payload).map(normalizeSavedPromptItem).filter(Boolean);
+      const rows = await bridge.fetchSavedPrompts();
+      return Array.isArray(rows) ? rows.map(normalizeSavedPromptItem).filter(Boolean) : null;
     }
 
     async function createSavedPromptOnApi(payload) {
-      const authContext = getAuthContext();
-      if (authContext.mode === "none") {
+      const bridge = getPromptLibraryBridge();
+      if (!bridge || typeof bridge.createSavedPrompt !== "function") {
         return null;
       }
 
-      const body = {
+      const created = await bridge.createSavedPrompt({
         title: payload.title,
         prompt: payload.prompt,
         sourceTemplateId: payload.sourceTemplateId || undefined,
         isFavorite: Boolean(payload.isFavorite)
-      };
-
-      if (authContext.mode === "master" && authContext.userId) {
-        body.userId = authContext.userId;
-      }
-
-      const response = await apiRequest("/saved", {
-        method: "POST",
-        headers: buildAuthHeaders(authContext),
-        body: JSON.stringify(body)
       });
-
-      const created = response && response.data ? response.data : response;
       return normalizeSavedPromptItem(created);
     }
 
     async function updateSavedPromptOnApi(promptId, payload) {
-      const authContext = getAuthContext();
-      if (authContext.mode === "none") {
+      const bridge = getPromptLibraryBridge();
+      if (!bridge || typeof bridge.updateSavedPrompt !== "function") {
         return false;
       }
 
-      const body = {
+      await bridge.updateSavedPrompt({
+        promptId,
         title: payload.title,
         prompt: payload.prompt,
         isFavorite: payload.isFavorite
-      };
-
-      if (authContext.mode === "master" && authContext.userId) {
-        body.userId = authContext.userId;
-      }
-
-      await apiRequest(`/saved/${encodeURIComponent(promptId)}`, {
-        method: "PATCH",
-        headers: buildAuthHeaders(authContext),
-        body: JSON.stringify(body)
       });
 
       return true;
     }
 
     async function deleteSavedPromptOnApi(promptId) {
-      const authContext = getAuthContext();
-      if (authContext.mode === "none") {
+      const bridge = getPromptLibraryBridge();
+      if (!bridge || typeof bridge.deleteSavedPrompt !== "function") {
         return false;
       }
 
-      await apiRequest(`/saved/${encodeURIComponent(promptId)}`, {
-        method: "DELETE",
-        headers: buildAuthHeaders(authContext)
-      });
+      await bridge.deleteSavedPrompt({ promptId });
 
       return true;
     }
@@ -1177,6 +1099,7 @@
 
     function init() {
       savedPrompts = loadSavedPrompts();
+      promptCategories = clonePromptCategories(constants.PROMPT_LIBRARY_CATEGORIES);
       activePromptCategoryId = "all";
       renderPromptLibrary();
       renderSavedPromptList();

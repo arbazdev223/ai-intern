@@ -454,6 +454,7 @@ You MUST follow these rules strictly:
       "Respond in valid GitHub-flavored Markdown only.",
       "Use headings only when they genuinely improve clarity. If you use headings, use ### Heading.",
       "Use bullet lists with '-' only. Never use '*' bullets.",
+      "If you need points under a point, use nested Markdown lists (indent sub-bullets by 2 spaces). Example:\n- Points:\n  - Sub point 1\n  - Sub point 2",
       "If code is requested, output the fenced code block first using ```language, then add a short beginner-friendly explanation unless the user asked for code only.",
       "Keep explanations concise, accurate, and beginner friendly.",
       "Avoid invalid Markdown, broken code fences, mixed bullet styles, and off-topic detours.",
@@ -815,6 +816,16 @@ You MUST follow these rules strictly:
       "- Never ignore user intent.",
       "- If user requests a format (table, list, bullets), you MUST strictly follow it."
     );
+    blocks.push(
+      "",
+      "REASONING STEP (INTERNAL, MANDATORY):",
+      "- Before answering, think step-by-step internally:",
+      "  1) What exactly is the user asking?",
+      "  2) What output format is required?",
+      "  3) What type of response is needed (explain, code, table, image, concise answer, etc.)?",
+      "- Keep this reasoning private.",
+      "- Output only the final answer."
+    );
 
     if (plannerFormat === "table") {
       blocks.push(
@@ -1024,8 +1035,15 @@ You MUST follow these rules strictly:
   function buildImageGenerationPrompt(options = {}) {
     const plan = options.plan && typeof options.plan === "object" ? options.plan : {};
     const userInput = String(options.userInput || "").trim();
-    const topic = String(plan.topic || userInput || "general concept").trim();
+    const plannerTask = String(plan.task || "").trim().toLowerCase();
+    const topic = String(
+      plannerTask === "image"
+        ? userInput || "general concept"
+        : plan.topic || userInput || "general concept"
+    ).trim();
     const requestedType = String(plan.image_type || "auto").trim().toLowerCase();
+
+    console.log("IMAGE TOPIC:", userInput);
 
     const resolvedType =
       requestedType === "diagram" ||
@@ -1035,27 +1053,47 @@ You MUST follow these rules strictly:
         ? requestedType
         : "diagram";
 
-    const baseRules = [
-      "Create an image that matches this topic exactly:",
+    const comparisonRequested = shouldUseComparisonFormat("", userInput) || resolvedType === "comparison";
+
+    const baseRules = comparisonRequested
+      ? [
+      "Create a comparison diagram showing differences between:",
       topic,
       "",
       "STRICT RULES:",
+      "- Ignore previous conversation context.",
+      "- Use ONLY the current user input as the image topic.",
+      "- DO NOT generate unrelated images.",
+      "- You MUST strictly follow the topic.",
       "- DO NOT generate unrelated symbolic or random visuals.",
       "- ALWAYS match the topic exactly.",
       "- Keep it clean, minimal, labeled, and educational."
-    ];
+      ]
+      : [
+      "Create an educational diagram explaining:",
+      topic,
+      "",
+      "STRICT RULES:",
+      "- Ignore previous conversation context.",
+      "- Use ONLY the current user input as the image topic.",
+      "- DO NOT generate unrelated images.",
+      "- You MUST strictly follow the topic.",
+      "- DO NOT generate unrelated symbolic or random visuals.",
+      "- ALWAYS match the topic exactly.",
+      "- Keep it clean, minimal, labeled, and educational."
+      ];
 
-    if (resolvedType === "flowchart") {
-      baseRules.push(
-        "",
-        "Type: flowchart",
-        "Create a clear step-by-step flowchart with labeled boxes and directional arrows."
-      );
-    } else if (resolvedType === "comparison") {
+    if (comparisonRequested) {
       baseRules.push(
         "",
         "Type: comparison infographic",
         "Create a side-by-side comparison diagram with clear labels for differences and similarities."
+      );
+    } else if (resolvedType === "flowchart") {
+      baseRules.push(
+        "",
+        "Type: flowchart",
+        "Create a clear step-by-step flowchart with labeled boxes and directional arrows."
       );
     } else if (resolvedType === "realistic") {
       baseRules.push(

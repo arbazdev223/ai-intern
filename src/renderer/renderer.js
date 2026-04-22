@@ -88,6 +88,10 @@
       voiceLivePreview: document.getElementById("voiceLivePreview"),
       voiceOutputMode: document.getElementById("voiceOutputMode"),
       voiceButton: document.getElementById("voiceButton"),
+      voiceWaveWrap: document.getElementById("voiceWaveWrap"),
+      voiceWaveCanvas: document.getElementById("voiceWaveCanvas"),
+      voiceStopButton: document.getElementById("voiceStopButton"),
+      voiceCancelButton: document.getElementById("voiceCancelButton"),
       voiceToggle: document.getElementById("voiceToggle"),
       voiceToggleLabel: document.getElementById("voiceToggleLabel"),
       voiceStatus: document.getElementById("voiceStatus")
@@ -197,6 +201,7 @@
 
     let chatManager = null;
     let promptLibrary = null;
+    let legacyModals = null;
 
     const sidebar = root.RendererModules.sidebar.createSidebarController({
       closeDialog: () => {
@@ -224,13 +229,20 @@
       sidebar
     });
 
+    legacyModals = root.RendererModules.legacyModals.createLegacyModalController({
+      refs
+    });
+
     // initialize prompt library so it wires its DOM event handlers
     try {
       if (promptLibrary && typeof promptLibrary.init === "function") {
         promptLibrary.init();
       }
+      if (legacyModals && typeof legacyModals.init === "function") {
+        legacyModals.init();
+      }
     } catch (e) {
-      console.error("Prompt library init failed:", e);
+      console.error("Renderer UI module init failed:", e);
     }
 
     const messageRenderer = root.RendererModules.messageRenderer.createMessageRenderer({
@@ -293,6 +305,71 @@
       console.error("Renderer bootstrap failed:", error);
     });
     voiceManager.init();
+
+    // Auto-update UX: show basic status and allow restart-to-install when ready.
+    try {
+      if (root.electronAPI && typeof root.electronAPI.onUpdateStatus === "function") {
+        root.electronAPI.onUpdateStatus((payload = {}) => {
+          const state = String(payload.state || "");
+          if (!chatManager || typeof chatManager.setStatus !== "function") {
+            return;
+          }
+
+          if (state === "checking") {
+            chatManager.setStatus("Checking for updates...", { busy: true });
+            return;
+          }
+
+          if (state === "downloading") {
+            chatManager.setStatus("Downloading update...", { busy: true });
+            return;
+          }
+
+          if (state === "ready") {
+            const version = payload && payload.version ? String(payload.version) : "";
+            chatManager.setStatus(
+              version ? `Update ${version} ready. Restart to install.` : "Update ready. Restart to install.",
+              { busy: false }
+            );
+            return;
+          }
+
+          if (state === "up-to-date") {
+            // Avoid overriding normal chat status if user is interacting.
+            if (typeof chatManager.getBusy === "function" && chatManager.getBusy()) {
+              return;
+            }
+            chatManager.setStatus("Up to date", { busy: false });
+            return;
+          }
+
+          if (state === "error") {
+            if (typeof chatManager.getBusy === "function" && chatManager.getBusy()) {
+              return;
+            }
+            chatManager.setStatus("Update check failed", { busy: false });
+          }
+        });
+      }
+
+      if (root.electronAPI && typeof root.electronAPI.onUpdateReadySilent === "function") {
+        root.electronAPI.onUpdateReadySilent((payload = {}) => {
+          const version = payload && payload.version ? String(payload.version) : "";
+          const message = version
+            ? `Update ${version} downloaded. Restart now to install?`
+            : "Update downloaded. Restart now to install?";
+
+          if (typeof window !== "undefined" && typeof window.confirm === "function") {
+            const shouldRestart = window.confirm(message);
+            if (shouldRestart && root.updateAPI && typeof root.updateAPI.installUpdate === "function") {
+              root.updateAPI.installUpdate();
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("Update listener setup failed:", e);
+    }
   }
 
   root.RendererModules = root.RendererModules || {};
