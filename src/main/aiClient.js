@@ -2201,7 +2201,8 @@ Your job:
     }
     const skipWebSearch = shouldSkipWebSearchForPrompt(userPrompt);
     const dynamicRateQuery = isDynamicRateQuery(userPrompt);
-    const containsUrl = /https?:\/\/[^\s)\]}>"']+/i.test(userPrompt);
+    const containsUrl =
+      /https?:\/\/[^\s)\]}>"']+/i.test(userPrompt) || Boolean(payload && payload.urlContext);
     const hasExplicitWebSignal = /\b(search|latest|news|update)\b/i.test(userPrompt);
     const stableFactQuery = /\b(who\s+is|what\s+is)\b/i.test(userPrompt);
     const hasRecencySignal = /\b(current|currently|today|now|latest|recent|202\d)\b/i.test(userPrompt);

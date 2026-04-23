@@ -631,6 +631,25 @@
       return getSessionById(activeChatId);
     }
 
+    function extractFirstUrlFromText(text) {
+      const source = String(text || "");
+      const match = source.match(/https?:\/\/[^\s)\]}>"']+/i);
+      return match ? String(match[0]).trim() : "";
+    }
+
+    function shouldAttachLastUrlContext(promptText) {
+      const prompt = String(promptText || "").trim().toLowerCase();
+      if (!prompt) {
+        return false;
+      }
+
+      // Follow-up patterns: user refers to previously shared link/page without pasting URL again.
+      return (
+        /(\bmodule\b|\bmodules\b|\bsyllabus\b|\bcurriculum\b|\bcourse\b|\bcontent\b|\bdetails\b)/i.test(prompt) ||
+        /\b(iske\s+under|uske\s+under|isme|usme|wahan|wahaan|andar)\b/i.test(prompt)
+      );
+    }
+
     function updateConversationFromActiveSession() {
       const session = getActiveSession();
       if (!session) {
@@ -1329,11 +1348,32 @@
 
         const allowExternalForRequest = isFileAttachment ? true : isExternalScreenAllowed();
 
+        // Persist last URL per chat so follow-up questions can reuse it.
+        try {
+          const session = getActiveSession();
+          if (session) {
+            const pastedUrl = extractFirstUrlFromText(promptForRequest);
+            if (pastedUrl) {
+              session.lastUrl = pastedUrl;
+            }
+          }
+        } catch (_error) {}
+
+        const activeSession = getActiveSession();
+        const lastUrlContext =
+          activeSession &&
+          activeSession.lastUrl &&
+          !extractFirstUrlFromText(promptForRequest) &&
+          shouldAttachLastUrlContext(promptForRequest)
+            ? String(activeSession.lastUrl)
+            : "";
+
         const response = await options.assistantAPI.sendPrompt({
           userPrompt: promptForRequest,
           screenshotBase64,
           contextMessages: getMemoryContext(),
           memorySummary: getMemorySummary(),
+          urlContext: lastUrlContext,
           rawPrompt: Boolean(screenshotBase64 && !isFileAttachment),
           allowExternalScreenshot: allowExternalForRequest,
           forceImageGeneration: shouldForceImageGeneration,

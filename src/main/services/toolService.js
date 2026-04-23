@@ -162,7 +162,10 @@ function createToolService(options = {}) {
         throw new Error("Link reader unavailable");
       }
 
-      const url = linkReaderService.extractFirstUrl ? linkReaderService.extractFirstUrl(userPrompt) : "";
+      const overrideUrl = String(payload.urlContext || payload.urlOverride || "").trim();
+      const url =
+        overrideUrl ||
+        (linkReaderService.extractFirstUrl ? linkReaderService.extractFirstUrl(userPrompt) : "");
       if (!url) {
         throw new Error("No URL detected");
       }
