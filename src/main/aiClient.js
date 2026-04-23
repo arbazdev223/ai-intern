@@ -2249,7 +2249,11 @@ Your job:
           userPrompt
         ));
     const plannerSelectedTool =
-      plannerTools.includes("web_search") || plannerTask === "search" ? "webSearch" : "";
+      hasUrlContext
+        ? "linkReader"
+        : plannerTools.includes("web_search") || plannerTask === "search"
+          ? "webSearch"
+          : "";
 
     let selectedTool =
       !rawPrompt && !screenshotBase64 && !skipWebSearch
@@ -2267,6 +2271,10 @@ Your job:
                   ? "webSearch"
                   : ""))
         : "";
+
+    if (hasUrlContext) {
+      selectedTool = "linkReader";
+    }
 
     const assignmentsFirst = selectedTool === "assignmentsSearch";
 
