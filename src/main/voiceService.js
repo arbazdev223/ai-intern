@@ -170,19 +170,9 @@ function createVoiceService() {
     return suspicious.length >= Math.max(4, Math.floor(normalized.length * 0.08));
   }
 
-  function containsDevanagari(text) {
-    const normalized = String(text || "");
-    if (!normalized) {
-      return false;
-    }
-
-    // Devanagari block: U+0900..U+097F
-    return /[\u0900-\u097F]/.test(normalized);
-  }
-
-  async function romanizeHinglish(text, apiKey) {
+  async function toHinglish(text, apiKey) {
     const input = normalizeTranscript(text);
-    if (!input || !containsDevanagari(input)) {
+    if (!input) {
       return input;
     }
 
@@ -191,11 +181,17 @@ function createVoiceService() {
       input: [
         {
           role: "system",
-          content:
-            "You convert Hindi written in Devanagari into Hinglish (Roman/Latin script). " +
-            "Rules: Do NOT translate to English. Only transliterate. " +
-            "Preserve English words, numbers, brand names, and punctuation as-is. " +
-            "Return only the transliterated text."
+          content: [
+            "Convert the user's text into Hinglish (Hindi in Roman/Latin script).",
+            "",
+            "Rules:",
+            "- If the input is English, translate it into natural Hinglish.",
+            "- If the input is Hindi in Devanagari, transliterate it into Roman script (Hinglish).",
+            "- Preserve names, numbers, URLs, code, and already-English words as-is.",
+            "- Do NOT output Devanagari characters.",
+            "- Keep tone and meaning the same.",
+            "- Return only the final Hinglish text (no explanations)."
+          ].join("\n")
         },
         { role: "user", content: input }
       ],
@@ -236,7 +232,85 @@ function createVoiceService() {
 
       return normalized;
     } catch (error) {
-      warnVoiceDebug("Hinglish romanization failed", error && error.message ? error.message : error);
+      warnVoiceDebug("Hinglish conversion failed", error && error.message ? error.message : error);
+      return input;
+    }
+  }
+
+  function containsNonLatinLetters(text) {
+    const normalized = String(text || "");
+    if (!normalized) {
+      return false;
+    }
+
+    // If we see Devanagari or other non-Latin scripts, translation is needed.
+    // Keep it simple: any letter outside basic Latin/Latin-1 ranges triggers.
+    try {
+      return /[^\u0000-\u024F]/u.test(normalized);
+    } catch (_error) {
+      return /[^\x00-\xFF]/.test(normalized);
+    }
+  }
+
+  async function toEnglish(text, apiKey) {
+    const input = normalizeTranscript(text);
+    if (!input) {
+      return input;
+    }
+
+    const body = {
+      model: sttPostprocessModel,
+      input: [
+        {
+          role: "system",
+          content: [
+            "Translate the user's text into clear, natural English.",
+            "",
+            "Rules:",
+            "- If the input is already English, keep it as-is (only fix obvious STT glitches).",
+            "- Preserve names, numbers, URLs, code, and punctuation.",
+            "- Return only the final English text (no explanations)."
+          ].join("\n")
+        },
+        { role: "user", content: input }
+      ],
+      temperature: 0
+    };
+
+    try {
+      const response = await fetchWithRetry(`${openAiBaseUrl}/v1/responses`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body)
+      });
+
+      const payload = await response.json().catch(() => null);
+      const outputText =
+        payload && typeof payload.output_text === "string"
+          ? payload.output_text
+          : payload && payload.output && Array.isArray(payload.output)
+            ? payload.output
+              .flatMap((item) => (item && item.content ? item.content : []))
+              .map((part) => (part && part.text ? part.text : ""))
+              .filter(Boolean)
+              .join("")
+            : "";
+
+      const normalized = normalizeTranscript(outputText);
+      if (!normalized) {
+        return input;
+      }
+
+      if (looksLikeInstructionLeak(normalized) || looksLikeMojibake(normalized)) {
+        return input;
+      }
+
+      return normalized;
+    } catch (error) {
+      warnVoiceDebug("English translation failed", error && error.message ? error.message : error);
       return input;
     }
   }
@@ -819,11 +893,20 @@ function createVoiceService() {
     }
 
     if (outputMode === "hinglish") {
-      const romanized = await romanizeHinglish(text, apiKey);
+      const hinglish = await toHinglish(text, apiKey);
       return {
-        text: romanized,
-        provider: String(best.provider || "openai-whisper-1"),
+        text: hinglish,
+        provider: `${String(best.provider || "openai-whisper-1")}+hinglish`,
         language: "hinglish"
+      };
+    }
+
+    if (outputMode === "english") {
+      const english = containsNonLatinLetters(text) ? await toEnglish(text, apiKey) : text;
+      return {
+        text: english,
+        provider: `${String(best.provider || "openai-whisper-1")}+english`,
+        language: "en"
       };
     }
     return {
