@@ -2203,6 +2203,7 @@ Your job:
     const dynamicRateQuery = isDynamicRateQuery(userPrompt);
     const containsUrl =
       /https?:\/\/[^\s)\]}>"']+/i.test(userPrompt) || Boolean(payload && payload.urlContext);
+    const hasUrlContext = Boolean(payload && payload.urlContext);
     const hasExplicitWebSignal = /\b(search|latest|news|update)\b/i.test(userPrompt);
     const stableFactQuery = /\b(who\s+is|what\s+is)\b/i.test(userPrompt);
     const hasRecencySignal = /\b(current|currently|today|now|latest|recent|202\d)\b/i.test(userPrompt);
@@ -2240,7 +2241,6 @@ Your job:
 
     // If the user pasted a URL, always prefer reading that URL directly (even if assignments are configured).
     // This prevents generic "URL structure" answers and enables module/syllabus extraction.
-    const hasUrlContext = Boolean(payload && payload.urlContext);
     const shouldUseLinkReader =
       (containsUrl || hasUrlContext) &&
       // If urlContext exists, always read the page so follow-up questions stay grounded.
@@ -2256,13 +2256,16 @@ Your job:
         ? plannerSelectedTool ||
           (!plannerPlan &&
           !shouldBypassWebSearchForStableFact &&
-          (shouldUseLinkReader
+          // URL context should always use linkReader to avoid hallucinated / unrelated web results.
+          (hasUrlContext
             ? "linkReader"
-            : shouldHeuristicallyUseAssignments
-              ? "assignmentsSearch"
-              : needsWeb || shouldHeuristicallySearch || dynamicRateQuery
-              ? "webSearch"
-              : ""))
+            : shouldUseLinkReader
+              ? "linkReader"
+              : shouldHeuristicallyUseAssignments
+                ? "assignmentsSearch"
+                : needsWeb || shouldHeuristicallySearch || dynamicRateQuery
+                  ? "webSearch"
+                  : ""))
         : "";
 
     const assignmentsFirst = selectedTool === "assignmentsSearch";
