@@ -894,6 +894,19 @@
         imageMessage
       });
 
+      // Update URL context even when the URL appears in assistant output (e.g., Sources link),
+      // so the user can ask follow-ups without re-pasting.
+      try {
+        const detectedUrl = extractFirstUrlFromText(safeContent);
+        if (detectedUrl) {
+          session.lastUrl = detectedUrl;
+          const wantsDeepUrlWork = /\b(explor(?:e)?|analy[sz]e|summari[sz]e|read|review|explain|modules?|syllabus|curriculum)\b/i.test(
+            String(safeContent || "")
+          );
+          session.lastUrlTurnsRemaining = wantsDeepUrlWork ? 10 : 6;
+        }
+      } catch (_error) {}
+
       if (safeRole === "user" && !session.renamed && (!session.title || session.title === "New chat")) {
         session.title = options.sessionStore.createTitleFromMessage(safeContent || "New chat");
       }
