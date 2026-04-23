@@ -57,6 +57,17 @@
       /\blatest\b/i,
       /\bsearch\b/i
     ],
+    ASSIGNMENTS_TRIGGER_PATTERNS: [
+      /\bassignment(s)?\b/i,
+      /\bcourse\b/i,
+      /\bmodule\b/i,
+      /\btopic\b/i,
+      /\bsyllabus\b/i,
+      /\bworksheet\b/i,
+      /\bproject\b/i,
+      /\bassignment\s+(?:ka|ki|ke)\b/i,
+      /\bcourse\s+(?:ka|ki|ke)\b/i
+    ],
     WEB_SEARCH_SAFETY_PROMPT,
     FULL_FORM_QUERY_PATTERNS: [/\bfull\s*form\b/i, /\bacronym\b/i, /\bexpand\b/i],
     ACRONYM_STOP_WORDS: [

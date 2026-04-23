@@ -5,6 +5,7 @@ const path = require("path");
 const os = require("os");
 const fsPromises = require("fs/promises");
 const { spawn } = require("child_process");
+const { getEnv, getEnvFileHint } = require("./config/env");
 
 function createVoiceService() {
   const baseUrl = String(process.env.ELEVENLABS_BASE_URL || "https://api.elevenlabs.io").replace(/\/+$/, "");
@@ -48,7 +49,8 @@ function createVoiceService() {
   }
 
   function getOpenAiApiKey() {
-    return String(process.env.OPENAI_API_KEY || "").trim();
+    const env = getEnv();
+    return String(env.OPENAI_API_KEY || "").trim();
   }
 
   function normalizeTranscript(value) {
@@ -501,7 +503,7 @@ function createVoiceService() {
 
   function normalizeOutputMode(value) {
     const mode = String(value || "auto").trim().toLowerCase();
-    if (mode === "hindi" || mode === "english") {
+    if (mode === "hinglish" || mode === "english") {
       return mode;
     }
     return "auto";
@@ -516,7 +518,7 @@ function createVoiceService() {
     }
 
     if (!apiKey) {
-      throw new Error("OpenAI API key is not configured.");
+      throw new Error(`OPENAI_API_KEY is not configured. Add it in: ${getEnvFileHint()}`);
     }
 
     const mimeType = normalizeSttMimeType(payload.mimeType || "audio/webm");
@@ -549,7 +551,7 @@ function createVoiceService() {
 
     const requestedLanguageCode = String(payload.languageCode || "").trim();
     const languageCode =
-      outputMode === "hindi"
+      outputMode === "hinglish"
         ? "hi"
         : outputMode === "english"
           ? "en"

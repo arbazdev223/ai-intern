@@ -43,6 +43,8 @@ function normalizeSearchQuery(query) {
 
 function createToolService(options = {}) {
   const searchService = options.searchService || null;
+  const assignmentsService = options.assignmentsService || null;
+  const linkReaderService = options.linkReaderService || null;
   const { sanitizeUserInput } = require("../utils/sanitizer");
 
   function sanitizeSearchField(value, maxChars) {
@@ -57,6 +59,8 @@ function createToolService(options = {}) {
     const ocrText = String(payload.ocrText || payload.extractedText || "").trim();
     let toolResult = "";
     let webSearchResult = null;
+    let assignmentsResult = null;
+    let linkReaderResult = null;
 
     if (toolName === "ocrReader") {
       const extracted = ocrText || extractOcrTextFromPrompt(userPrompt);
@@ -110,9 +114,74 @@ function createToolService(options = {}) {
       const sources = (web.sources || []).map((item) => (item.url ? `- [${item.title}](${item.url})` : `- ${item.title}`));
       if (sources.length) lines.push("", "Sources:", ...sources);
       toolResult = `[TOOL:webSearch]\n${lines.join("\n")}`;
+    } else if (toolName === "assignmentsSearch") {
+      if (!assignmentsService || typeof assignmentsService.searchAssignments !== "function") {
+        throw new Error("Assignments search unavailable");
+      }
+
+      const safeQuery = sanitizeSearchField(userPrompt, 240);
+      const result = await assignmentsService.searchAssignments(safeQuery, { limit: 3, includeDocumentText: true });
+      const matches = Array.isArray(result && result.matches) ? result.matches : [];
+      assignmentsResult = {
+        total: Number.isFinite(Number(result && result.total)) ? Number(result.total) : matches.length,
+        matches: matches.map((item) => ({
+          id: String(item && item._id ? item._id : ""),
+          topicName: sanitizeSearchField(item && item.topicName ? item.topicName : "", 140),
+          documentType: sanitizeSearchField(item && item.documentType ? item.documentType : "", 40),
+          documentText: sanitizeSearchField(item && item.documentText ? item.documentText : "", 8000),
+          course: Array.isArray(item && item.course)
+            ? item.course.slice(0, 2).map((c) => ({
+                title: sanitizeSearchField(c && c.title ? c.title : "", 140),
+                code: sanitizeSearchField(c && c.code ? c.code : "", 80)
+              }))
+            : []
+        }))
+      };
+
+      const lines = ["Relevant assignments found:", ""];
+      if (!assignmentsResult.matches.length) {
+        lines.push("No matching assignments found. Try including the course code/title or the assignment topic.");
+      } else {
+        assignmentsResult.matches.forEach((item, idx) => {
+          const courseLabel =
+            Array.isArray(item.course) && item.course.length
+              ? ` (${item.course.map((c) => c.code || c.title).filter(Boolean).join(", ")})`
+              : "";
+          lines.push(`${idx + 1}. ${item.topicName || "Untitled"}${courseLabel}`);
+          if (item.documentText) {
+            lines.push(`   - Content: ${item.documentText.slice(0, 280)}${item.documentText.length > 280 ? "..." : ""}`);
+          } else {
+            lines.push("   - Content: (No document text extracted)");
+          }
+        });
+      }
+
+      toolResult = `[TOOL:assignmentsSearch]\n${lines.join("\n")}`;
+    } else if (toolName === "linkReader") {
+      if (!linkReaderService || typeof linkReaderService.fetchUrlText !== "function") {
+        throw new Error("Link reader unavailable");
+      }
+
+      const url = linkReaderService.extractFirstUrl ? linkReaderService.extractFirstUrl(userPrompt) : "";
+      if (!url) {
+        throw new Error("No URL detected");
+      }
+
+      const raw = await linkReaderService.fetchUrlText(url);
+      const pageText = sanitizeSearchField(raw && raw.text ? raw.text : "", 8000);
+      linkReaderResult = {
+        url: sanitizeSearchField(raw && raw.url ? raw.url : url, 500),
+        title: sanitizeSearchField(raw && raw.title ? raw.title : "", 240),
+        contentType: sanitizeSearchField(raw && raw.contentType ? raw.contentType : "", 120),
+        truncated: Boolean(raw && raw.truncated),
+        text: pageText
+      };
+
+      const preview = pageText ? (pageText.length > 900 ? `${pageText.slice(0, 897)}...` : pageText) : "";
+      toolResult = `[TOOL:linkReader]\nFetched: ${linkReaderResult.title || linkReaderResult.url}\nURL: ${linkReaderResult.url}\n\nContent preview:\n${preview || "(No readable text extracted)"}\n`;
     }
 
-    return { toolResult, webSearchResult };
+    return { toolResult, webSearchResult, assignmentsResult, linkReaderResult };
   }
 
   return { executeTool };

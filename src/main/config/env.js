@@ -137,6 +137,8 @@ function getEnv() {
     PROMPT_LIBRARY_BEARER_TOKEN: trimEnv(process.env.PROMPT_LIBRARY_BEARER_TOKEN),
     PROMPT_LIBRARY_MASTER_SECRET: trimEnv(process.env.PROMPT_LIBRARY_MASTER_SECRET),
     PROMPT_LIBRARY_USER_ID: trimEnv(process.env.PROMPT_LIBRARY_USER_ID),
+    ASSIGNMENTS_API_BASE: trimEnv(process.env.ASSIGNMENTS_API_BASE || "http://localhost:5000/api/assignments"),
+    ASSIGNMENTS_MASTER_TOKEN: trimEnv(process.env.ASSIGNMENTS_MASTER_TOKEN),
     IFDA_AUTO_UPDATE_ENABLED: trimEnv(process.env.IFDA_AUTO_UPDATE_ENABLED),
     IFDA_UPDATE_OWNER: trimEnv(process.env.IFDA_UPDATE_OWNER),
     IFDA_UPDATE_REPO: trimEnv(process.env.IFDA_UPDATE_REPO),
@@ -216,6 +218,10 @@ function ensureEnvTemplateExists() {
       "GEMINI_API_KEY=",
       "GEMINI_MODEL=gemini-1.5-flash",
       "GEMINI_VISION_MODEL=gemini-1.5-flash",
+      "",
+      "# IFDA IMS assignments (optional)",
+      "ASSIGNMENTS_API_BASE=http://localhost:5000/api/assignments",
+      "ASSIGNMENTS_MASTER_TOKEN=",
       ""
     ].join("\n");
 

@@ -1,3 +1,5 @@
+const { getEnv, getEnvFileHint } = require("../config/env");
+
 const DEFAULT_MODEL = String(process.env.OPENAI_IMAGE_MODEL || "gpt-image-1").trim();
 const DEFAULT_SIZE = String(process.env.OPENAI_IMAGE_SIZE || "1024x1024").trim();
 const GPT_IMAGE_SIZES = new Set(["1024x1024", "1536x1024", "1024x1536", "auto"]);
@@ -11,7 +13,8 @@ function isLikelyOpenAIKey(value) {
 }
 
 function getOpenAIKey() {
-  const primaryKey = String(process.env.OPENAI_API_KEY || "").trim();
+  const env = getEnv();
+  const primaryKey = String(env.OPENAI_API_KEY || "").trim();
   if (isLikelyOpenAIKey(primaryKey)) {
     return primaryKey;
   }
@@ -131,7 +134,7 @@ function createImageService(options = {}) {
   async function generateImage(prompt, optionsArg = {}) {
     const apiKey = getOpenAIKey();
     if (!apiKey) {
-      throw new Error("OPENAI_API_KEY is missing");
+      throw new Error(`OPENAI_API_KEY is missing. Add it in: ${getEnvFileHint()}`);
     }
 
     const model = String(optionsArg.model || DEFAULT_MODEL).trim() || DEFAULT_MODEL;

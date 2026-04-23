@@ -1,12 +1,12 @@
 {
   "name": "ifda-ai",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "author": "IFDA",
   "description": "Electron desktop chat app using OpenAI and Gemini APIs",
   "main": "main.js",
   "scripts": {
     "start": "set ELECTRON_RUN_AS_NODE=&& set NODE_ENV=development&& electron .",
-    "build": "electron-builder --publish never",
+    "build": "node scripts/generateBundledSecrets.js && electron-builder --publish never",
     "bundle:keys": "node scripts/generateBundledSecrets.js",
     "dist": "node scripts/generateBundledSecrets.js && electron-builder --win --publish never --config.directories.output=%TEMP%\\ai-intern-dist",
     "release:win": "node scripts/generateBundledSecrets.js && electron-builder --win --publish always --config.directories.output=%TEMP%\\ai-intern-dist --config.publish.provider=github --config.publish.owner=%IFDA_UPDATE_OWNER% --config.publish.repo=%IFDA_UPDATE_REPO% --config.publish.releaseType=release",

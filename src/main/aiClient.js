@@ -43,7 +43,9 @@ Your job:
 - Keep formatting clean and minimal.
 `.trim();
   let didWarnInvalidKey = false;
-  const debugAiTrace = String(process.env.DEBUG_AI_TRACE || "false").trim().toLowerCase() === "true";
+  const debugAiTrace =
+    String(process.env.DEBUG_AI_TRACE || "false").trim().toLowerCase() === "true" ||
+    String(process.env.DEBUG_ENV || "false").trim().toLowerCase() === "true";
 
   function logAiDebug(message, payload) {
     if (!debugAiTrace) {
@@ -123,7 +125,11 @@ Your job:
   // Initialize service adapters
   const modelService = createModelService();
   const intentService = createIntentService(modelService);
-  const toolService = createToolService({ searchService: options.searchService });
+  const toolService = createToolService({
+    searchService: options.searchService,
+    assignmentsService: options.assignmentsService,
+    linkReaderService: options.linkReaderService
+  });
   const ragService = createRagService();
   const responseService = createResponseService();
   const fileService = createFileService();
@@ -531,6 +537,24 @@ Your job:
     }
 
     const lower = text.toLowerCase();
+
+    // Allow generic "clean flowchart step by step process" prompts to generate a polished default process flow.
+    // Only treat as ambiguous when the prompt is short/underspecified (e.g., "make flowchart").
+    const mentionsFlowchart = /\b(flow\s*chart|flowchart)\b/.test(lower);
+    const mentionsGenericProcess = /\b(step\s*by\s*step|process|workflow)\b/.test(lower);
+    const hasExplicitTopicCue =
+      /\b(of|for|about|on|regarding)\b/.test(lower) ||
+      lower.includes(":") ||
+      /\"[^\"]{4,}\"|'[^']{4,}'/.test(text);
+    const looksLikeStyledFlowchartPrompt =
+      mentionsFlowchart &&
+      mentionsGenericProcess &&
+      !hasExplicitTopicCue &&
+      (/\b(minimal|clean|professional|vector|high\s*resolution|white\s*background)\b/.test(lower) || text.length >= 60);
+    if (looksLikeStyledFlowchartPrompt) {
+      return false;
+    }
+
     const startsLikeDiagram =
       /^(generate|create|make|draw|design)\s+(an?\s+)?(diagram|flowchart|chart|infographic|mind\s*map)\b/.test(lower) ||
       /^(diagram|flowchart|chart|infographic|mind\s*map)\s+(generate|create|make|draw)\b/.test(lower);
@@ -2177,6 +2201,7 @@ Your job:
     }
     const skipWebSearch = shouldSkipWebSearchForPrompt(userPrompt);
     const dynamicRateQuery = isDynamicRateQuery(userPrompt);
+    const containsUrl = /https?:\/\/[^\s)\]}>"']+/i.test(userPrompt);
     const hasExplicitWebSignal = /\b(search|latest|news|update)\b/i.test(userPrompt);
     const stableFactQuery = /\b(who\s+is|what\s+is)\b/i.test(userPrompt);
     const hasRecencySignal = /\b(current|currently|today|now|latest|recent|202\d)\b/i.test(userPrompt);
@@ -2185,17 +2210,57 @@ Your job:
     const shouldHeuristicallySearch =
       promptBuilder.shouldTriggerWebSearch(userPrompt) &&
       (normalizedIntent === "web_research" || isCurrentEventsPrompt(userPrompt) || hasExplicitWebSignal);
+
+    const assignmentsConfigured = Boolean(
+      options.assignmentsService &&
+        options.assignmentsService.isConfigured &&
+        options.assignmentsService.isConfigured()
+    );
+
+    const hasAssignmentsKeyword =
+      typeof promptBuilder.shouldTriggerAssignmentsSearch === "function" &&
+      promptBuilder.shouldTriggerAssignmentsSearch(userPrompt);
+
+    // When assignments are configured, we can cheaply try a best-effort lookup even if the user doesn't
+    // explicitly say "assignment/course". This improves "topic-only" prompts like:
+    // "DevOps, Deployment & Cloud Engineering introduction".
+    const looksLikeCourseTopic =
+      String(userPrompt || "").trim().length >= 14 &&
+      !(intentService && typeof intentService.isGreeting === "function" && intentService.isGreeting(userPrompt)) &&
+      !containsUrl &&
+      !hasExplicitWebSignal &&
+      normalizedIntent !== "web_research" &&
+      normalizedIntent !== "coding" &&
+      normalizedIntent !== "image_generation";
+
+    const shouldHeuristicallyUseAssignments =
+      assignmentsConfigured &&
+      (hasAssignmentsKeyword || looksLikeCourseTopic);
+
+    const shouldUseLinkReader =
+      containsUrl &&
+      !assignmentsConfigured &&
+      /\b(link|url|is\s+page|iss?\s+page|summari[sz]e|explain|describe|kya\s+hai|kya\s+likha|kya\s+content)\b/i.test(
+        userPrompt
+      );
     const plannerSelectedTool =
       plannerTools.includes("web_search") || plannerTask === "search" ? "webSearch" : "";
-    const selectedTool =
+
+    let selectedTool =
       !rawPrompt && !screenshotBase64 && !skipWebSearch
         ? plannerSelectedTool ||
           (!plannerPlan &&
           !shouldBypassWebSearchForStableFact &&
-          (needsWeb || shouldHeuristicallySearch || dynamicRateQuery)
-            ? "webSearch"
-            : "")
+          (shouldHeuristicallyUseAssignments
+            ? "assignmentsSearch"
+            : shouldUseLinkReader
+              ? "linkReader"
+            : needsWeb || shouldHeuristicallySearch || dynamicRateQuery
+              ? "webSearch"
+              : ""))
         : "";
+
+    const assignmentsFirst = selectedTool === "assignmentsSearch";
 
     logAiDebug("request:start", {
       hasScreenshot: Boolean(screenshotBase64),
@@ -2207,15 +2272,39 @@ Your job:
 
     let toolResult = "";
     let webSearchResult = null;
+    let assignmentsResult = null;
+    let linkReaderResult = null;
 
-    if (selectedTool === "webSearch") {
+    if (selectedTool === "webSearch" || selectedTool === "assignmentsSearch" || selectedTool === "linkReader") {
       try {
         const tooling = await runTool(payload, selectedTool);
         toolResult = tooling.toolResult || "";
         webSearchResult = tooling.webSearchResult || null;
+        assignmentsResult = tooling.assignmentsResult || null;
+        linkReaderResult = tooling.linkReaderResult || null;
       } catch (_error) {
         toolResult = "";
         webSearchResult = null;
+        assignmentsResult = null;
+        linkReaderResult = null;
+      }
+    }
+
+    const hasAssignmentMatches =
+      assignmentsResult &&
+      Array.isArray(assignmentsResult.matches) &&
+      assignmentsResult.matches.length > 0;
+
+    // If a user asks course/assignment-related question but we don't find anything in Assignments,
+    // fall back to web search (when enabled) to still help the user.
+    if (assignmentsFirst && !hasAssignmentMatches && !skipWebSearch && !screenshotBase64) {
+      try {
+        const tooling = await runTool(payload, "webSearch");
+        toolResult = tooling.toolResult || toolResult;
+        webSearchResult = tooling.webSearchResult || null;
+        selectedTool = webSearchResult ? "webSearch" : selectedTool;
+      } catch (_error) {
+        // keep best-effort: do not throw, just proceed with normal LLM response.
       }
     }
 
@@ -2274,7 +2363,15 @@ Your job:
         ocrText: screenshotBase64 ? extractOcrTextFromPrompt(userPrompt) : "",
         detectedAppName: options.getCurrentApp()
       },
-      toolsData: webSearchResult ? { webSearch: webSearchResult } : toolResult ? { toolResult } : null
+      toolsData: webSearchResult
+        ? { webSearch: webSearchResult }
+        : linkReaderResult
+          ? { link: linkReaderResult, toolResult }
+          : assignmentsResult
+            ? { assignments: assignmentsResult, toolResult }
+            : toolResult
+              ? { toolResult }
+              : null
     });
 
     const selectedSpecialPrompt = extractPromptSection(finalPromptBase, "SELECTED SPECIAL PROMPT");

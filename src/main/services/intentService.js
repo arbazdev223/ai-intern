@@ -12,7 +12,7 @@ function createIntentService(modelService) {
   const PLANNER_TASKS = ["chat", "explain", "code", "image", "search", "analyze"];
   const PLANNER_SUBTASKS = ["basic", "deep", "comparison", "fix", "generate"];
   const PLANNER_TOOLS = ["web_search", "image_gen"];
-  const PLANNER_LANGUAGES = ["english", "hindi", "hinglish"];
+  const PLANNER_LANGUAGES = ["english", "hinglish", "hinglish"];
   const PLANNER_RESPONSE_MODES = ["short", "detailed"];
   const PLANNER_FORMATS = ["auto", "table", "list", "bullets"];
   const PLANNER_IMAGE_TYPES = ["auto", "diagram", "flowchart", "comparison", "realistic"];
@@ -436,7 +436,7 @@ function createIntentService(modelService) {
       '  "subtask": "basic | deep | comparison | fix | generate",',
       '  "tools": ["web_search" | "image_gen"],',
       '  "topic": "main topic",',
-      '  "language": "english | hindi | hinglish",',
+      '  "language": "english | hinglish | hinglish",',
       '  "response_mode": "short | detailed",',
       '  "format": "auto | table | list | bullets",',
       '  "image_type": "auto | diagram | flowchart | comparison | realistic"',
@@ -600,7 +600,7 @@ function createIntentService(modelService) {
 
   function detectLanguage(text) {
     const source = String(text || "").trim();
-    if (/[\u0900-\u097F]/.test(source)) return "hindi";
+    if (/[\u0900-\u097F]/.test(source)) return "hinglish";
     const ratioHindiWords = (source.match(/(kya|hai|kar|tum|mujhe|kaise|bata)/gi) || []).length;
     if (ratioHindiWords >= 1) return "hinglish";
     return "english";

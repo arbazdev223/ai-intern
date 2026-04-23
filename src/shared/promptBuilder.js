@@ -210,7 +210,7 @@ You MUST follow these rules strictly:
 
   function detectLanguage(text) {
     const source = String(text || "").trim();
-    if (/[\u0900-\u097F]/.test(source)) return "hindi";
+    if (/[\u0900-\u097F]/.test(source)) return "hinglish";
     const ratioHindiWords = (source.match(/(kya|hai|kar|tum|mujhe|kaise|bata)/gi) || []).length;
     if (ratioHindiWords >= 1) return "hinglish";
     return "english";
@@ -686,6 +686,55 @@ You MUST follow these rules strictly:
       parts.push(`Tool Output:\n${String(toolsData.toolResult).trim()}`);
     }
 
+    if (toolsData.assignments && typeof toolsData.assignments === "object") {
+      const data = toolsData.assignments;
+      const matches = Array.isArray(data.matches) ? data.matches : [];
+      const lines = ["Assignments Data (internal):"];
+      if (matches.length === 0) {
+        lines.push("No matching assignments found.");
+      } else {
+        matches.slice(0, 8).forEach((item) => {
+          const topic = String(item && item.topicName ? item.topicName : "").trim();
+          const docText = String(item && item.documentText ? item.documentText : "").trim();
+          const courses = Array.isArray(item && item.course) ? item.course : [];
+          const courseLabel = courses.length
+            ? courses
+                .map((c) => String(c && (c.code || c.title) ? (c.code || c.title) : "").trim())
+                .filter(Boolean)
+                .join(", ")
+            : "";
+          lines.push(`- ${topic || "Untitled"}${courseLabel ? ` (${courseLabel})` : ""}`);
+          if (docText) {
+            lines.push(`  Content excerpt: ${docText.slice(0, 1000)}${docText.length > 1000 ? "..." : ""}`);
+          } else {
+            lines.push("  Content excerpt: (No document text extracted)");
+          }
+        });
+        lines.push(
+          "",
+          "Instruction: Use the assignment content excerpts above as the primary reference for course-related answers. Do NOT show raw document URLs unless the user explicitly asks for a link."
+        );
+      }
+      parts.push(lines.join("\n"));
+    }
+
+    if (toolsData.link && typeof toolsData.link === "object") {
+      const link = toolsData.link;
+      const url = String(link.url || "").trim();
+      const title = String(link.title || "").trim();
+      const text = String(link.text || "").trim();
+
+      const lines = ["Link Content (primary reference):"];
+      if (title) lines.push(`Title: ${title}`);
+      if (url) lines.push(`URL: ${url}`);
+      if (text) {
+        lines.push("", "Extracted text:", text);
+      } else {
+        lines.push("", "No readable text extracted from the link (maybe paywalled/blocked). Ask the user to paste the content.");
+      }
+      parts.push(lines.join("\n"));
+    }
+
     return parts.filter(Boolean).join("\n\n");
   }
 
@@ -1011,6 +1060,17 @@ You MUST follow these rules strictly:
       : false;
   }
 
+  function shouldTriggerAssignmentsSearch(userPrompt) {
+    const text = String(userPrompt || "").trim();
+    if (!text) {
+      return false;
+    }
+
+    return Array.isArray(constants.ASSIGNMENTS_TRIGGER_PATTERNS)
+      ? constants.ASSIGNMENTS_TRIGGER_PATTERNS.some((pattern) => pattern.test(text))
+      : false;
+  }
+
   function isFullFormQuery(userPrompt) {
     const text = String(userPrompt || "");
     return Array.isArray(constants.FULL_FORM_QUERY_PATTERNS)
@@ -1036,7 +1096,7 @@ You MUST follow these rules strictly:
     const plan = options.plan && typeof options.plan === "object" ? options.plan : {};
     const userInput = String(options.userInput || "").trim();
     const plannerTask = String(plan.task || "").trim().toLowerCase();
-    const topic = String(
+    let topic = String(
       plannerTask === "image"
         ? userInput || "general concept"
         : plan.topic || userInput || "general concept"
@@ -1054,6 +1114,18 @@ You MUST follow these rules strictly:
         : "diagram";
 
     const comparisonRequested = shouldUseComparisonFormat("", userInput) || resolvedType === "comparison";
+
+    const lower = userInput.toLowerCase();
+    const isGenericFlowchartPrompt =
+      resolvedType === "flowchart" &&
+      /\b(flow\s*chart|flowchart)\b/.test(lower) &&
+      /\b(step\s*by\s*step|process|workflow)\b/.test(lower) &&
+      !/\b(of|for|about|on|regarding)\b/.test(lower) &&
+      !lower.includes(":");
+
+    if (isGenericFlowchartPrompt) {
+      topic = "a generic step-by-step process flow (process improvement cycle)";
+    }
 
     const baseRules = comparisonRequested
       ? [
@@ -1095,6 +1167,27 @@ You MUST follow these rules strictly:
         "Type: flowchart",
         "Create a clear step-by-step flowchart with labeled boxes and directional arrows."
       );
+
+      if (isGenericFlowchartPrompt) {
+        baseRules.push(
+          "",
+          "Default flowchart steps (use these exact labels):",
+          "1. Define Objective — Clearly define the goal and scope of the process.",
+          "2. Gather Information — Collect all relevant data and information.",
+          "3. Analyze — Examine the information and identify key insights.",
+          "4. Develop Solution — Create possible solutions based on the analysis.",
+          "5. Implement — Put the chosen solution into action.",
+          "6. Monitor & Evaluate — Track performance and evaluate results.",
+          "7. Review & Improve — Review outcomes and make improvements.",
+          "",
+          "Design style (very important):",
+          "- White background, clean minimal vector look, high resolution.",
+          "- Each step is a wide rounded rectangle card.",
+          "- Left colored icon panel + step number circle.",
+          "- Use distinct accent colors per step (blue/green/yellow/purple/teal/orange/blue).",
+          "- Thin arrows centered between cards."
+        );
+      }
     } else if (resolvedType === "realistic") {
       baseRules.push(
         "",
@@ -1123,6 +1216,7 @@ You MUST follow these rules strictly:
     sanitizeContextMessages,
     shouldIncludeAppContext,
     shouldIncludeConversationContext,
-    shouldTriggerWebSearch
+    shouldTriggerWebSearch,
+    shouldTriggerAssignmentsSearch
   };
 });

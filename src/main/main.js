@@ -10,6 +10,8 @@ const { createVoiceService } = require("./voiceService");
 const { createUpdateService } = require("./updateService");
 const { registerIpcHandlers } = require("./ipcHandlers");
 const { createPromptLibraryService } = require("./services/promptLibraryService");
+const { createAssignmentsService } = require("./services/assignmentsService");
+const { createLinkReaderService } = require("./services/linkReaderService");
 
 const startupEnv = getEnv();
 
@@ -35,9 +37,13 @@ if (process.env.NODE_ENV === "development") {
 const windowManager = createWindowManager({ app });
 const screenshotService = createScreenshotService();
 const searchService = createSearchService();
+const assignmentsService = createAssignmentsService();
+const linkReaderService = createLinkReaderService();
 const aiClient = createAiClient({
   getCurrentApp: () => windowManager.getCurrentApp(),
   searchService,
+  assignmentsService,
+  linkReaderService,
   screenshotService
 });
 const voiceService = createVoiceService();

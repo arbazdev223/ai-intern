@@ -45,7 +45,7 @@
 
     function getVoiceOutputMode() {
       const raw = String((refs.voiceOutputMode && refs.voiceOutputMode.value) || "auto").trim().toLowerCase();
-      if (raw === "hindi" || raw === "english") {
+      if (raw === "hinglish" || raw === "english") {
         return raw;
       }
       return "auto";
@@ -401,7 +401,7 @@
             const response = await options.assistantAPI.transcribeSpeech({
               file: audioFile,
               languageCode:
-                outputMode === "hindi"
+                outputMode === "hinglish"
                   ? "hi"
                   : outputMode === "english"
                     ? "en"
