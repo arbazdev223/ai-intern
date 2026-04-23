@@ -2240,11 +2240,14 @@ Your job:
 
     // If the user pasted a URL, always prefer reading that URL directly (even if assignments are configured).
     // This prevents generic "URL structure" answers and enables module/syllabus extraction.
+    const hasUrlContext = Boolean(payload && payload.urlContext);
     const shouldUseLinkReader =
-      containsUrl &&
-      /\b(link|url|page|website|site|summari[sz]e|explain|describe|analy[sz]e|explore|modules?|syllabus|curriculum|kya\s+hai|kya\s+likha|kya\s+content)\b/i.test(
-        userPrompt
-      );
+      (containsUrl || hasUrlContext) &&
+      // If urlContext exists, always read the page so follow-up questions stay grounded.
+      (hasUrlContext ||
+        /\b(link|url|page|website|site|summari[sz]e|explain|describe|analy[sz]e|explore|modules?|syllabus|curriculum|kya\s+hai|kya\s+likha|kya\s+content)\b/i.test(
+          userPrompt
+        ));
     const plannerSelectedTool =
       plannerTools.includes("web_search") || plannerTask === "search" ? "webSearch" : "";
 

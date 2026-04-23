@@ -637,17 +637,26 @@
       return match ? String(match[0]).trim() : "";
     }
 
-    function shouldAttachLastUrlContext(promptText) {
+    function shouldAttachLastUrlContext(promptText, session) {
       const prompt = String(promptText || "").trim().toLowerCase();
       if (!prompt) {
         return false;
       }
 
-      // Follow-up patterns: user refers to previously shared link/page without pasting URL again.
-      return (
-        /(\bmodule\b|\bmodules\b|\bsyllabus\b|\bcurriculum\b|\bcourse\b|\bcontent\b|\bdetails\b)/i.test(prompt) ||
-        /\b(iske\s+under|uske\s+under|isme|usme|wahan|wahaan|andar)\b/i.test(prompt)
-      );
+      const hasPinnedUrl = Boolean(session && session.lastUrl && Number(session.lastUrlTurnsRemaining) > 0);
+
+      // If user recently shared a URL in this chat, treat follow-ups as referring to that page by default.
+      // This is what users expect: they shouldn't need to paste the URL repeatedly.
+      if (hasPinnedUrl) {
+        // Avoid attaching URL context to explicit "new topic" prompts.
+        if (/\b(new\s+topic|forget\s+link|clear\s+link|reset)\b/i.test(prompt)) {
+          return false;
+        }
+        return true;
+      }
+
+      // Otherwise: only attach when prompt looks like a follow-up reference.
+      return /\b(link|url|page|website|site|this|that|it)\b/i.test(prompt);
     }
 
     function updateConversationFromActiveSession() {
@@ -1355,6 +1364,12 @@
             const pastedUrl = extractFirstUrlFromText(promptForRequest);
             if (pastedUrl) {
               session.lastUrl = pastedUrl;
+              // Pin the URL as context for the next few user messages.
+              // This prevents the bot from "forgetting" the page between follow-ups.
+              const wantsDeepUrlWork = /\b(explore|analy[sz]e|summari[sz]e|read|review|explain|modules?|syllabus|curriculum)\b/i.test(
+                String(promptForRequest || "")
+              );
+              session.lastUrlTurnsRemaining = wantsDeepUrlWork ? 8 : 5;
             }
           }
         } catch (_error) {}
@@ -1364,9 +1379,13 @@
           activeSession &&
           activeSession.lastUrl &&
           !extractFirstUrlFromText(promptForRequest) &&
-          shouldAttachLastUrlContext(promptForRequest)
+          shouldAttachLastUrlContext(promptForRequest, activeSession)
             ? String(activeSession.lastUrl)
             : "";
+
+        if (lastUrlContext && activeSession && Number(activeSession.lastUrlTurnsRemaining) > 0) {
+          activeSession.lastUrlTurnsRemaining = Number(activeSession.lastUrlTurnsRemaining) - 1;
+        }
 
         const response = await options.assistantAPI.sendPrompt({
           userPrompt: promptForRequest,
