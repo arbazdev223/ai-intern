@@ -1366,10 +1366,10 @@
               session.lastUrl = pastedUrl;
               // Pin the URL as context for the next few user messages.
               // This prevents the bot from "forgetting" the page between follow-ups.
-              const wantsDeepUrlWork = /\b(explore|analy[sz]e|summari[sz]e|read|review|explain|modules?|syllabus|curriculum)\b/i.test(
+              const wantsDeepUrlWork = /\b(explor(?:e)?|analy[sz]e|summari[sz]e|read|review|explain|modules?|syllabus|curriculum)\b/i.test(
                 String(promptForRequest || "")
               );
-              session.lastUrlTurnsRemaining = wantsDeepUrlWork ? 8 : 5;
+              session.lastUrlTurnsRemaining = wantsDeepUrlWork ? 10 : 6;
             }
           }
         } catch (_error) {}
