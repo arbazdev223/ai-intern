@@ -12,6 +12,7 @@ function createVoiceService() {
   const openAiBaseUrl = String(process.env.OPENAI_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
   const saveDebugAudio = String(process.env.VOICE_SAVE_DEBUG_AUDIO || "false").trim().toLowerCase() === "true";
   const debugVoiceLogs = String(process.env.VOICE_DEBUG_LOGS || "false").trim().toLowerCase() === "true";
+  const sttPostprocessModel = String(process.env.OPENAI_STT_POSTPROCESS_MODEL || "gpt-4o-mini").trim();
 
   function logVoiceDebug(message, payload) {
     if (!debugVoiceLogs) {
@@ -167,6 +168,77 @@ function createVoiceService() {
     }
 
     return suspicious.length >= Math.max(4, Math.floor(normalized.length * 0.08));
+  }
+
+  function containsDevanagari(text) {
+    const normalized = String(text || "");
+    if (!normalized) {
+      return false;
+    }
+
+    // Devanagari block: U+0900..U+097F
+    return /[\u0900-\u097F]/.test(normalized);
+  }
+
+  async function romanizeHinglish(text, apiKey) {
+    const input = normalizeTranscript(text);
+    if (!input || !containsDevanagari(input)) {
+      return input;
+    }
+
+    const body = {
+      model: sttPostprocessModel,
+      input: [
+        {
+          role: "system",
+          content:
+            "You convert Hindi written in Devanagari into Hinglish (Roman/Latin script). " +
+            "Rules: Do NOT translate to English. Only transliterate. " +
+            "Preserve English words, numbers, brand names, and punctuation as-is. " +
+            "Return only the transliterated text."
+        },
+        { role: "user", content: input }
+      ],
+      temperature: 0
+    };
+
+    try {
+      const response = await fetchWithRetry(`${openAiBaseUrl}/v1/responses`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body)
+      });
+
+      const payload = await response.json().catch(() => null);
+      const outputText =
+        payload && typeof payload.output_text === "string"
+          ? payload.output_text
+          : payload && payload.output && Array.isArray(payload.output)
+            ? payload.output
+              .flatMap((item) => (item && item.content ? item.content : []))
+              .map((part) => (part && part.text ? part.text : ""))
+              .filter(Boolean)
+              .join("")
+            : "";
+
+      const normalized = normalizeTranscript(outputText);
+      if (!normalized) {
+        return input;
+      }
+
+      // Avoid returning instruction leaks or mojibake.
+      if (looksLikeInstructionLeak(normalized) || looksLikeMojibake(normalized)) {
+        return input;
+      }
+
+      return normalized;
+    } catch (error) {
+      warnVoiceDebug("Hinglish romanization failed", error && error.message ? error.message : error);
+      return input;
+    }
   }
 
   async function resolvePythonSttScriptPath() {
@@ -743,6 +815,15 @@ function createVoiceService() {
         text: "",
         provider: String(best.provider || "python-faster-whisper"),
         language: String(best.language || languageCode || "").trim()
+      };
+    }
+
+    if (outputMode === "hinglish") {
+      const romanized = await romanizeHinglish(text, apiKey);
+      return {
+        text: romanized,
+        provider: String(best.provider || "openai-whisper-1"),
+        language: "hinglish"
       };
     }
     return {
